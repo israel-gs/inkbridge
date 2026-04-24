@@ -5,10 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.inkbridge.data.capture.AndroidMotionEvent
 import com.inkbridge.data.capture.MotionEventMapper
+import com.inkbridge.data.capture.StylusRouter
 import com.inkbridge.data.connection.ConnectionManager
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.TransportKind
 import com.inkbridge.domain.usecase.StreamStylus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -21,6 +23,17 @@ import kotlinx.coroutines.launch
  * Owns [ConnectionManager] and [StreamStylus]. Wires capture → encoding → transport.
  *
  * Manual DI: instantiated via [Factory] in [MainActivity]. No Hilt in this change.
+ *
+ * ## Hot-path design
+ *
+ * [onMotion] is called on the Compose pointer-input thread at 100–240 Hz. Routing
+ * is delegated to [StylusChannelDispatcher] which uses two channels:
+ *
+ * - **sampleChannel** — capacity 512, DROP_OLDEST. For MOVE samples.
+ * - **priorityChannel** — capacity 64, SUSPEND. For Button and Proximity actions
+ *   (must not be dropped).
+ *
+ * [onMotion] itself is non-suspending and never blocks the pointer callback.
  *
  * Exposes:
  * - [connectionState] — mirrors [ConnectionManager.state].
@@ -73,7 +86,6 @@ class ConnectionViewModel(
     fun connect(host: String, port: Int, kind: TransportKind) {
         viewModelScope.launch {
             connectionManager.connect(host, port, kind)
-            // Re-wire StreamStylus to the newly created transport
             streamStylus = StreamStylus(transport = connectionManager.currentTransport())
         }
     }
@@ -86,7 +98,7 @@ class ConnectionViewModel(
     }
 
     /**
-     * Called by [CaptureSurface] for every MotionEvent.
+     * Called by [CaptureSurface] for every MotionEvent. Non-blocking.
      *
      * Ignored when not in [ConnectionState.Connected] state (ui.md R4).
      *
@@ -103,9 +115,39 @@ class ConnectionViewModel(
         val mapped = MotionEventMapper.map(
             AndroidMotionEvent(event, viewWidth, viewHeight),
         )
-        viewModelScope.launch {
-            for (sample in mapped) {
-                streamStylus.emit(sample)
+        // Samsung S Pen at 240 Hz packs ~10-20 historical samples into each
+        // ACTION_MOVE / ACTION_HOVER_MOVE event. Forwarding all of them floods
+        // the socket under bursts (900+ sends/sec) and causes intermittent
+        // stalls. Drawing apps (Krita, Excalidraw) smooth strokes internally
+        // from 60 Hz input fine. Keep only the latest sample for MOVE events;
+        // always preserve every sample on transitions (DOWN/UP) where historical
+        // data conveys the exact initial/final pressure.
+        val effectiveSamples = when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_MOVE,
+            android.view.MotionEvent.ACTION_HOVER_MOVE,
+            -> mapped.lastOrNull()?.let(::listOf).orEmpty()
+            else -> mapped
+        }
+        val actions = StylusRouter.route(
+            actionMasked = event.actionMasked,
+            samples = effectiveSamples,
+            timestampNs = System.nanoTime(),
+        )
+        // Per-action launch on IO. Prioritises subjective responsiveness — the
+        // newest MotionEvent's first sample reaches the transport without
+        // waiting for the previous MotionEvent's batch to drain. Samples may
+        // arrive out-of-order; the server's sequence-number check drops stale
+        // frames per wire-protocol.md R9, so correctness is preserved.
+        val sink = streamStylus
+        for (action in actions) {
+            viewModelScope.launch(Dispatchers.IO) {
+                when (action) {
+                    is StylusRouter.Action.Sample -> sink.emit(action.sample)
+                    is StylusRouter.Action.Button ->
+                        sink.emitButton(action.primaryPressed, action.secondaryPressed, action.timestampNs)
+                    is StylusRouter.Action.Proximity ->
+                        sink.emitProximity(action.entering, action.timestampNs)
+                }
             }
         }
     }

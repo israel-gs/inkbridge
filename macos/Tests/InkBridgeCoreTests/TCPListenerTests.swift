@@ -182,4 +182,29 @@ final class TCPListenerTests: XCTestCase {
         conn1.cancel()
         conn2.cancel()
     }
+
+    /// Verifies the listener accepts connections with TCP_NODELAY enabled.
+    ///
+    /// "noDelay works" cannot be tested without a timing harness, but we verify
+    /// the listener is still functional end-to-end after the NWParameters change.
+    func testNoDelayListenerAcceptsAndDecodesFrame() async throws {
+        try listener.start()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        let conn = makeConnection()
+        try await connectAndWait(conn)
+
+        let data = try moveFrame(x: 0.5, y: 0.5)
+        async let firstFrame = listener.frames.first(where: { _ in true })
+        try await send(data, on: conn)
+
+        let frame = await firstFrame
+        let received = try XCTUnwrap(frame)
+        guard case let .move(rx, ry, _, _, _) = received.event else {
+            return XCTFail("Expected move event from noDelay listener")
+        }
+        XCTAssertEqual(rx, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(ry, 0.5, accuracy: 0.0001)
+        conn.cancel()
+    }
 }

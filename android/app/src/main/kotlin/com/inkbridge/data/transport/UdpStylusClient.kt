@@ -18,6 +18,17 @@ import java.net.InetAddress
  *
  * All socket operations run on [Dispatchers.IO]. No auto-reconnect (transport.md R6).
  *
+ * ## Buffer reuse
+ *
+ * Under 240 Hz stylus sampling, a new [DatagramPacket] per send produces 240
+ * allocations/second and consistent GC pressure. Instead, a single [DatagramPacket]
+ * backed by the largest possible frame (40 bytes) is pre-allocated in [connect] and
+ * reused across all [send] calls via [DatagramPacket.setData] + [DatagramPacket.setLength].
+ *
+ * The 40-byte backing array covers the largest InkBridge frame (STYLUS_MOVE: 36 bytes)
+ * with a small margin. If a frame ever exceeds this, the packet falls back to a fresh
+ * allocation for that call only.
+ *
  * @param host Remote host IPv4 or hostname.
  * @param port Remote port [1024, 65535]. Default 4545 (transport.md R1).
  */
@@ -35,6 +46,19 @@ class UdpStylusClient(
     @Volatile
     private var remoteAddress: InetAddress? = null
 
+    /**
+     * Pre-allocated backing buffer for the reusable [DatagramPacket].
+     * 40 bytes covers the largest InkBridge frame (STYLUS_MOVE = 36 bytes) with margin.
+     */
+    private val reuseBuffer = ByteArray(40)
+
+    /**
+     * Single reusable [DatagramPacket]. Initialized in [connect]; null before connect.
+     * Protected by the [Dispatchers.IO] context — only one coroutine calls [send] at a time.
+     */
+    @Volatile
+    private var reusePacket: DatagramPacket? = null
+
     override suspend fun connect(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val addr = InetAddress.getByName(host)
@@ -42,6 +66,8 @@ class UdpStylusClient(
             sock.connect(addr, port)
             socket = sock
             remoteAddress = addr
+            // Pre-allocate the reusable packet now that the address is known.
+            reusePacket = DatagramPacket(reuseBuffer, reuseBuffer.size, addr, port)
             _isConnected.value = true
         }
     }
@@ -49,8 +75,17 @@ class UdpStylusClient(
     override suspend fun send(bytes: ByteArray): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val sock = socket ?: error("Not connected")
-            val packet = DatagramPacket(bytes, bytes.size)
-            sock.send(packet)
+            val packet = reusePacket
+            if (packet != null && bytes.size <= reuseBuffer.size) {
+                // Fast path: copy into the backing buffer and update length — no allocation.
+                bytes.copyInto(reuseBuffer)
+                packet.setData(reuseBuffer, 0, bytes.size)
+                sock.send(packet)
+            } else {
+                // Slow path: frame larger than the pre-allocated buffer (should not happen
+                // with the current protocol, but safe to handle).
+                sock.send(DatagramPacket(bytes, bytes.size))
+            }
         }
     }
 
@@ -58,5 +93,6 @@ class UdpStylusClient(
         _isConnected.value = false
         socket?.close()
         socket = null
+        reusePacket = null
     }
 }

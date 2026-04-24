@@ -16,6 +16,7 @@ final class ServerViewModel: ObservableObject {
 
     @Published private(set) var serverState: ServerState = .idle
     @Published private(set) var stats: Stats = Stats()
+    @Published private(set) var latency: LatencyTracker.Snapshot = .zero
     @Published private(set) var isTrusted: Bool = false
     @Published private(set) var tunnelState: UsbTunnelState = .idle
 
@@ -45,6 +46,10 @@ final class ServerViewModel: ObservableObject {
         server.$stats
             .receive(on: DispatchQueue.main)
             .assign(to: &$stats)
+
+        server.$latency
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$latency)
 
         tunnelMaintainer.$state
             .receive(on: DispatchQueue.main)

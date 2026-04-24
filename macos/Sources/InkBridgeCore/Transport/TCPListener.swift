@@ -56,7 +56,14 @@ public final class TCPListener: PacketListener {
     // MARK: - PacketListener
 
     public func start() throws {
-        let params = NWParameters.tcp
+        // Disable Nagle's algorithm so small stylus packets are sent immediately
+        // rather than being buffered for up to ~200ms by the kernel. Without this,
+        // the 20–36 byte frames are coalesced, adding significant draw latency.
+        // transport.md R4.
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.noDelay = true
+        let params = NWParameters(tls: nil, tcp: tcpOptions)
+
         // Bind to loopback only — only meaningful with `adb reverse`. transport.md R4.
         // Setting requiredLocalEndpoint pins the listener to 127.0.0.1 and the desired
         // port. We must NOT pass the port again in NWListener(using:on:) — that causes
