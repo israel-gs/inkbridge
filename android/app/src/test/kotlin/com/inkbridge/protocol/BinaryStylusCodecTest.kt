@@ -1,0 +1,359 @@
+package com.inkbridge.protocol
+
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+
+/**
+ * Unit tests for [BinaryStylusCodec] following the TDD red-green-refactor cycle.
+ *
+ * Test vectors are loaded at runtime from the build directory where Gradle copies them.
+ * The Gradle task `copyProtocolVectors` (wired to processTestResources) copies
+ * protocol/test-vectors → build/resources/test/vectors before `test` runs.
+ *
+ * Vectors are the single source of truth for interop between Kotlin and Swift codecs.
+ *
+ * Wire-protocol.md references: R1 (LE), R2 (version), R3 (header), R4 (event_type),
+ * R5 (flags), R6 (MOVE payload), R7 (PROXIMITY payload), R8 (BUTTON payload), R9 (sequence).
+ */
+class BinaryStylusCodecTest {
+
+    // ─────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Loads a hex test vector from the classpath (resources/test/vectors/).
+     * Format: one line of uppercase space-separated hex pairs; lines starting with `#` are comments.
+     */
+    private fun loadVector(filename: String): ByteArray {
+        val stream = checkNotNull(
+            javaClass.classLoader?.getResourceAsStream("vectors/$filename"),
+        ) { "Test vector not found on classpath: vectors/$filename — run `./gradlew test` (copyProtocolVectors task must run first)" }
+        return stream.bufferedReader().useLines { lines ->
+            lines
+                .filterNot { it.trimStart().startsWith('#') }
+                .flatMap { it.trim().split(Regex("\\s+")) }
+                .filter { it.isNotEmpty() }
+                .map { it.toInt(16).toByte() }
+                .toList()
+                .toByteArray()
+        }
+    }
+
+    private val codec = BinaryStylusCodec
+
+    // ─────────────────────────────────────────────────────────────
+    // Decode: vector-matching tests (R6–R8, R10)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode move vector matches expected StylusEvent Move`() {
+        // Vector: move-with-pressure-tilt.hex
+        // version=1, event_type=0x01, flags=0x03 (PRESSURE_PRESENT|TILT_PRESENT)
+        // sequence=42, timestamp_ns=8_000_000_000
+        // x=0.5, y=0.25, pressure=49151, tilt_x=4500, tilt_y=-1800
+        val bytes = loadVector("move-with-pressure-tilt.hex")
+        assertEquals(36, bytes.size, "STYLUS_MOVE frame must be 36 bytes")
+
+        val frame = codec.decode(bytes)
+
+        // Header assertions
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_MOVE, frame.header.eventType)
+        assertEquals(0x03u.toUByte(), frame.header.flags) // PRESSURE_PRESENT | TILT_PRESENT
+        assertEquals(42u, frame.header.sequence)
+        assertEquals(8_000_000_000uL, frame.header.timestampNs)
+
+        // Payload assertions
+        val move = assertInstanceOf(StylusEvent.Move::class.java, frame.event)
+        assertEquals(0.5f, move.x, 1e-6f)
+        assertEquals(0.25f, move.y, 1e-6f)
+        assertEquals(49151u.toUShort(), move.pressure)
+        assertEquals(4500.toShort(), move.tiltX)
+        assertEquals((-1800).toShort(), move.tiltY)
+    }
+
+    @Test
+    fun `decode proximity-enter vector`() {
+        // Vector: proximity-enter.hex
+        // version=1, event_type=0x02, flags=0x04 (HOVER), sequence=0, timestamp_ns=1_000_000_000
+        // entering=0x01
+        val bytes = loadVector("proximity-enter.hex")
+        assertEquals(20, bytes.size, "STYLUS_PROXIMITY frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_PROXIMITY, frame.header.eventType)
+        assertEquals(0x04u.toUByte(), frame.header.flags) // HOVER bit set
+        assertEquals(0u, frame.header.sequence)
+        assertEquals(1_000_000_000uL, frame.header.timestampNs)
+
+        val proximity = assertInstanceOf(StylusEvent.Proximity::class.java, frame.event)
+        assertTrue(proximity.entering)
+    }
+
+    @Test
+    fun `decode proximity-exit vector`() {
+        // Vector: proximity-exit.hex
+        // version=1, event_type=0x02, flags=0x00 (HOVER clear), sequence=1, timestamp_ns=2_000_000_000
+        // entering=0x00
+        val bytes = loadVector("proximity-exit.hex")
+        assertEquals(20, bytes.size, "STYLUS_PROXIMITY frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_PROXIMITY, frame.header.eventType)
+        assertEquals(0x00u.toUByte(), frame.header.flags) // HOVER bit clear
+        assertEquals(1u, frame.header.sequence)
+        assertEquals(2_000_000_000uL, frame.header.timestampNs)
+
+        val proximity = assertInstanceOf(StylusEvent.Proximity::class.java, frame.event)
+        assertFalse(proximity.entering)
+    }
+
+    @Test
+    fun `decode button-press vector`() {
+        // Vector: button-press.hex
+        // version=1, event_type=0x03, flags=0x08 (BUTTON_PRIMARY), sequence=2, timestamp_ns=3_000_000_000
+        // buttons=0x08 (mirrors bits 3-4 of flags)
+        val bytes = loadVector("button-press.hex")
+        assertEquals(20, bytes.size, "STYLUS_BUTTON frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_BUTTON, frame.header.eventType)
+        assertEquals(0x08u.toUByte(), frame.header.flags) // BUTTON_PRIMARY bit set
+        assertEquals(2u, frame.header.sequence)
+        assertEquals(3_000_000_000uL, frame.header.timestampNs)
+
+        val button = assertInstanceOf(StylusEvent.Button::class.java, frame.event)
+        assertEquals(0x08u.toUByte(), button.buttons)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Roundtrip tests (encode → decode → assertEquals)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Move`() {
+        val event = StylusEvent.Move(x = 0.5f, y = 0.25f, pressure = 49151u, tiltX = 4500, tiltY = -1800)
+        val flags: UByte = (Flags.PRESSURE_PRESENT.toUInt() or Flags.TILT_PRESENT.toUInt()).toUByte()
+
+        val encoded = codec.encode(event, flags = flags, sequence = 42u, timestampNs = 8_000_000_000uL)
+        assertEquals(36, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val move = assertInstanceOf(StylusEvent.Move::class.java, decoded.event)
+
+        assertEquals(42u, decoded.header.sequence)
+        assertEquals(8_000_000_000uL, decoded.header.timestampNs)
+        assertEquals(0.5f, move.x, 1e-6f)
+        assertEquals(0.25f, move.y, 1e-6f)
+        assertEquals(49151u.toUShort(), move.pressure)
+        assertEquals(4500.toShort(), move.tiltX)
+        assertEquals((-1800).toShort(), move.tiltY)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Proximity entering`() {
+        val event = StylusEvent.Proximity(entering = true)
+        val flags: UByte = Flags.HOVER
+
+        val encoded = codec.encode(event, flags = flags, sequence = 0u, timestampNs = 1_000_000_000uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val proximity = assertInstanceOf(StylusEvent.Proximity::class.java, decoded.event)
+        assertTrue(proximity.entering)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Proximity leaving`() {
+        val event = StylusEvent.Proximity(entering = false)
+        val flags: UByte = 0x00u
+
+        val encoded = codec.encode(event, flags = flags, sequence = 1u, timestampNs = 2_000_000_000uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val proximity = assertInstanceOf(StylusEvent.Proximity::class.java, decoded.event)
+        assertFalse(proximity.entering)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Button`() {
+        val event = StylusEvent.Button(buttons = 0x08u)
+        val flags: UByte = Flags.BUTTON_PRIMARY
+
+        val encoded = codec.encode(event, flags = flags, sequence = 2u, timestampNs = 3_000_000_000uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val button = assertInstanceOf(StylusEvent.Button::class.java, decoded.event)
+        assertEquals(0x08u.toUByte(), button.buttons)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Encode byte-for-byte equality against test vectors (R10)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `encode STYLUS_MOVE produces byte-for-byte match with move-with-pressure-tilt vector`() {
+        val expected = loadVector("move-with-pressure-tilt.hex")
+        val event = StylusEvent.Move(x = 0.5f, y = 0.25f, pressure = 49151u, tiltX = 4500, tiltY = -1800)
+        val flags: UByte = (Flags.PRESSURE_PRESENT.toUInt() or Flags.TILT_PRESENT.toUInt()).toUByte()
+
+        val actual = codec.encode(event, flags = flags, sequence = 42u, timestampNs = 8_000_000_000uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    @Test
+    fun `encode STYLUS_PROXIMITY entering produces byte-for-byte match with proximity-enter vector`() {
+        val expected = loadVector("proximity-enter.hex")
+        val event = StylusEvent.Proximity(entering = true)
+        val flags: UByte = Flags.HOVER
+
+        val actual = codec.encode(event, flags = flags, sequence = 0u, timestampNs = 1_000_000_000uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    @Test
+    fun `encode STYLUS_PROXIMITY leaving produces byte-for-byte match with proximity-exit vector`() {
+        val expected = loadVector("proximity-exit.hex")
+        val event = StylusEvent.Proximity(entering = false)
+        val flags: UByte = 0x00u
+
+        val actual = codec.encode(event, flags = flags, sequence = 1u, timestampNs = 2_000_000_000uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    @Test
+    fun `encode STYLUS_BUTTON produces byte-for-byte match with button-press vector`() {
+        val expected = loadVector("button-press.hex")
+        val event = StylusEvent.Button(buttons = 0x08u)
+        val flags: UByte = Flags.BUTTON_PRIMARY
+
+        val actual = codec.encode(event, flags = flags, sequence = 2u, timestampNs = 3_000_000_000uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Error / discard tests (R2, R4, R8)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode truncated bytes throws ProtocolException`() {
+        // A valid STYLUS_MOVE frame is 36 bytes; feeding 15 (less than header) must throw.
+        val truncated = ByteArray(15) { 0x00 }
+        truncated[0] = 0x01 // version
+
+        assertThrows<ProtocolException> {
+            codec.decode(truncated)
+        }
+    }
+
+    @Test
+    fun `decode unknown event type throws ProtocolException`() {
+        // Build a 20-byte frame with event_type = 0xFF (reserved).
+        val bytes = ByteArray(20) { 0x00 }
+        bytes[0] = 0x01 // version
+        bytes[1] = 0xFF.toByte() // unknown event_type
+
+        assertThrows<ProtocolException> {
+            codec.decode(bytes)
+        }
+    }
+
+    @Test
+    fun `decode wrong version throws ProtocolException`() {
+        // Build a 20-byte frame with version = 0x02 (unknown to this implementation).
+        val bytes = ByteArray(20) { 0x00 }
+        bytes[0] = 0x02 // unsupported version
+
+        assertThrows<ProtocolException> {
+            codec.decode(bytes)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Endianness assertion (R1)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode reads u32 sequence in little-endian order`() {
+        // Construct a minimal STYLUS_PROXIMITY frame (20 bytes).
+        // Sequence bytes at offset 4: 0x01 0x00 0x00 0x00 → LE value = 1.
+        val bytes = ByteArray(20) { 0x00 }
+        bytes[0] = 0x01 // version
+        bytes[1] = 0x02 // event_type = STYLUS_PROXIMITY
+        // flags at [2] = 0x00 (HOVER clear, proximity-exit style so entering=0x00 at [16])
+        bytes[4] = 0x01 // sequence LSB = 1 → LE u32 = 1
+
+        val frame = codec.decode(bytes)
+        assertEquals(1u, frame.header.sequence, "Sequence must be read as little-endian u32")
+    }
+
+    @Test
+    fun `decode reads u64 timestamp in little-endian order`() {
+        // timestamp_ns at offsets 8–15.
+        // 8_000_000_000 = 0x00000001_DCD65000 → LE bytes: 00 50 D6 DC 01 00 00 00
+        val bytes = ByteArray(20) { 0x00 }
+        bytes[0] = 0x01  // version
+        bytes[1] = 0x02  // STYLUS_PROXIMITY
+        // Write 8_000_000_000 LE at offset 8
+        bytes[8]  = 0x00
+        bytes[9]  = 0x50
+        bytes[10] = 0xD6.toByte()
+        bytes[11] = 0xDC.toByte()
+        bytes[12] = 0x01
+        bytes[13] = 0x00
+        bytes[14] = 0x00
+        bytes[15] = 0x00
+
+        val frame = codec.decode(bytes)
+        assertEquals(8_000_000_000uL, frame.header.timestampNs)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STYLUS_BUTTON consistency check (R8)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode STYLUS_BUTTON with buttons inconsistent with flags throws ProtocolException`() {
+        // flags = 0x08 (BUTTON_PRIMARY) but buttons payload byte = 0x00 (inconsistent).
+        val bytes = ByteArray(20) { 0x00 }
+        bytes[0] = 0x01  // version
+        bytes[1] = 0x03  // STYLUS_BUTTON
+        bytes[2] = 0x08  // flags: BUTTON_PRIMARY
+        // buttons at offset 16 = 0x00 → inconsistent with flags bits 3-4
+        bytes[16] = 0x00
+
+        assertThrows<ProtocolException> {
+            codec.decode(bytes)
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Forward compatibility (R11)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode ignores trailing bytes beyond known payload size`() {
+        // A valid 20-byte STYLUS_PROXIMITY frame with 8 extra bytes appended.
+        val valid = loadVector("proximity-enter.hex")
+        val withTrailing = valid + ByteArray(8) { 0xFF.toByte() }
+
+        // Must decode successfully and ignore the trailing 8 bytes.
+        val frame = codec.decode(withTrailing)
+        val proximity = assertInstanceOf(StylusEvent.Proximity::class.java, frame.event)
+        assertTrue(proximity.entering)
+    }
+}

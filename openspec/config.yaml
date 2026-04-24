@@ -1,0 +1,47 @@
+schema: spec-driven
+
+context: |
+  InkBridge — wireless drawing tablet: Android client (S Pen) → macOS server.
+  Stack: Android Kotlin + Jetpack Compose; macOS Swift + SwiftUI.
+  Transports: dual — UDP (Wi-Fi, low latency) + TCP (USB via adb reverse).
+  Input injection on macOS: CGEventPost with tablet event types (pressure + tilt).
+  Greenfield: no code yet. Project initialized 2026-04-23.
+
+strict_tdd: true
+
+testing:
+  status: scaffolded
+  android:
+    runner: "./gradlew test"
+    unit: JUnit
+    linter: ktlint
+  macos:
+    runner: "swift test"
+    unit: XCTest
+    linter: SwiftLint
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules (android/, macos/, shared wire protocol)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Wire protocol specs must include byte layout and endianness
+  design:
+    - Include sequence diagrams for connection handshake and event flow
+    - Document latency budget per hop (capture → wire → inject)
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (protocol, android, macos, integration)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    - Load Kotlin/Compose skills for android/, Swift/SwiftUI skills for macos/
+  verify:
+    - Run tests if test infrastructure exists
+    - Manual verification required for stylus input until E2E harness exists
+    - Compare implementation against every spec scenario
+  archive:
+    - Warn before merging destructive deltas (large removals)

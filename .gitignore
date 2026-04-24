@@ -1,0 +1,28 @@
+# JetBrains / Android
+.gradle/
+/local.properties
+/.idea/
+*.iml
+build/
+captures/
+*.hprof
+
+# Xcode / Swift Package Manager
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+.build/
+Package.resolved
+macos/build/
+
+# macOS
+.DS_Store
+
+# General
+*.log
+.env
+.env.local
