@@ -17,6 +17,17 @@ public final class InkBridgeServer: ObservableObject {
 
     @Published public private(set) var state: ServerState = .idle
     @Published public private(set) var stats: Stats = Stats()
+    @Published public private(set) var latency: LatencyTracker.Snapshot = .zero
+
+    // MARK: - Private latency tracker
+
+    private var latencyTracker = LatencyTracker()
+    /// Throttle `latency` snapshot publishing. snapshot() sorts the whole ring
+    /// buffer, and @Published triggers SwiftUI updates — doing this on every
+    /// frame at 240 Hz chews MainActor time and kills the injection hot path.
+    /// Publish at most ~10 Hz.
+    private var lastLatencyPublishNs: UInt64 = 0
+    private static let latencyPublishIntervalNs: UInt64 = 100_000_000  // 100 ms
 
     // MARK: - Dependencies
 
@@ -138,6 +149,9 @@ public final class InkBridgeServer: ObservableObject {
     // MARK: - Frame processing
 
     private func processFrame(_ frame: DecodedFrame) {
+        // Capture arrival timestamp immediately — before any processing overhead.
+        let arrivalNs = DispatchTime.now().uptimeNanoseconds
+
         stats.packetsReceived += 1
         stats.lastPacketAt = Date()
 
@@ -161,6 +175,21 @@ public final class InkBridgeServer: ObservableObject {
         } catch {
             // R8: single injection failure must not change server state.
             stats.packetsDropped += 1
+        }
+
+        // Record latency after inject returns. wireNs comes from the packet header
+        // (Android System.nanoTime() — different clock domain; see LatencyTracker docs).
+        let injectNs = DispatchTime.now().uptimeNanoseconds
+        latencyTracker.record(
+            wireNs: frame.header.timestampNs,
+            arrivalNs: arrivalNs,
+            injectNs: injectNs
+        )
+        // Throttled publish — sorting+Combine on every frame stalls the
+        // injection hot path under 240 Hz stylus sampling.
+        if injectNs - lastLatencyPublishNs >= Self.latencyPublishIntervalNs {
+            lastLatencyPublishNs = injectNs
+            latency = latencyTracker.snapshot()
         }
     }
 

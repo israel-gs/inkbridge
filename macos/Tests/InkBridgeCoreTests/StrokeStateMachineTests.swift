@@ -21,9 +21,9 @@ final class StrokeStateMachineTests: XCTestCase {
     func testPrimaryStrokeSequence() {
         var sm = StrokeStateMachine()
 
-        // Button down (primary bit = 0x08).
+        // Button down (primary bit = 0x08). No prior move → lastFields nil.
         let down = sm.process(.button(buttons: 0x08), at: p)
-        XCTAssertEqual(down, [.mouseDown(point: p, button: .left)])
+        XCTAssertEqual(down, [.mouseDown(point: p, button: .left, fields: nil)])
         XCTAssertTrue(sm.state.primaryDown)
 
         // Move while down → dragged.
@@ -40,9 +40,15 @@ final class StrokeStateMachineTests: XCTestCase {
             .dragged(point: end, button: .left, fields: TabletFields(pressure: 30000, tiltX: 500, tiltY: -500)),
         ])
 
-        // Button up (bit cleared).
+        // Button up (bit cleared). lastFields carries the final drag's pressure/tilt.
         let up = sm.process(.button(buttons: 0x00), at: end)
-        XCTAssertEqual(up, [.mouseUp(point: end, button: .left)])
+        XCTAssertEqual(up, [
+            .mouseUp(
+                point: end,
+                button: .left,
+                fields: TabletFields(pressure: 30000, tiltX: 500, tiltY: -500)
+            ),
+        ])
         XCTAssertFalse(sm.state.primaryDown)
 
         // After up, move goes back to plain moved.
@@ -65,7 +71,7 @@ final class StrokeStateMachineTests: XCTestCase {
     func testSecondaryStrokeSequence() {
         var sm = StrokeStateMachine()
         let down = sm.process(.button(buttons: 0x10), at: p)
-        XCTAssertEqual(down, [.mouseDown(point: p, button: .right)])
+        XCTAssertEqual(down, [.mouseDown(point: p, button: .right, fields: nil)])
 
         let drag = sm.process(.move(x: 0.5, y: 0.5, pressure: 0, tiltX: 0, tiltY: 0), at: p)
         XCTAssertEqual(drag, [
@@ -73,7 +79,9 @@ final class StrokeStateMachineTests: XCTestCase {
         ])
 
         let up = sm.process(.button(buttons: 0x00), at: p)
-        XCTAssertEqual(up, [.mouseUp(point: p, button: .right)])
+        XCTAssertEqual(up, [
+            .mouseUp(point: p, button: .right, fields: TabletFields(pressure: 0, tiltX: 0, tiltY: 0)),
+        ])
     }
 
     // MARK: - Simultaneous buttons
@@ -82,8 +90,8 @@ final class StrokeStateMachineTests: XCTestCase {
         var sm = StrokeStateMachine()
         let actions = sm.process(.button(buttons: 0x18), at: p)
         XCTAssertEqual(actions.count, 2)
-        XCTAssertTrue(actions.contains(.mouseDown(point: p, button: .left)))
-        XCTAssertTrue(actions.contains(.mouseDown(point: p, button: .right)))
+        XCTAssertTrue(actions.contains(.mouseDown(point: p, button: .left, fields: nil)))
+        XCTAssertTrue(actions.contains(.mouseDown(point: p, button: .right, fields: nil)))
         XCTAssertTrue(sm.state.primaryDown)
         XCTAssertTrue(sm.state.secondaryDown)
     }
@@ -92,8 +100,8 @@ final class StrokeStateMachineTests: XCTestCase {
         var sm = StrokeStateMachine(state: .init(primaryDown: true, secondaryDown: true))
         let actions = sm.process(.button(buttons: 0x00), at: p)
         XCTAssertEqual(actions.count, 2)
-        XCTAssertTrue(actions.contains(.mouseUp(point: p, button: .left)))
-        XCTAssertTrue(actions.contains(.mouseUp(point: p, button: .right)))
+        XCTAssertTrue(actions.contains(.mouseUp(point: p, button: .left, fields: nil)))
+        XCTAssertTrue(actions.contains(.mouseUp(point: p, button: .right, fields: nil)))
         XCTAssertFalse(sm.state.primaryDown)
         XCTAssertFalse(sm.state.secondaryDown)
     }
@@ -106,6 +114,20 @@ final class StrokeStateMachineTests: XCTestCase {
         XCTAssertEqual(actions, [
             .dragged(point: p, button: .left, fields: TabletFields(pressure: 5000, tiltX: 0, tiltY: 0)),
         ])
+    }
+
+    // MARK: - Stroke-start dot fix — mouseDown carries last move's fields
+
+    func testMouseDownCarriesLastMoveFields() {
+        var sm = StrokeStateMachine()
+        // A move arrives first (order guaranteed by Android StylusRouter for ACTION_DOWN).
+        let expectedFields = TabletFields(pressure: 45000, tiltX: 200, tiltY: -300)
+        _ = sm.process(.move(x: 0.5, y: 0.5, pressure: 45000, tiltX: 200, tiltY: -300), at: p)
+
+        // Then the button frame. mouseDown MUST carry the sample's fields so
+        // drawing apps get the real touch pressure, not a max-pressure default.
+        let down = sm.process(.button(buttons: 0x08), at: p)
+        XCTAssertEqual(down, [.mouseDown(point: p, button: .left, fields: expectedFields)])
     }
 
     // MARK: - Proximity passthrough

@@ -26,8 +26,15 @@ public struct StrokeStateMachine {
 
     public private(set) var state: ButtonState
 
-    public init(state: ButtonState = ButtonState()) {
+    /// Last observed tablet fields, updated on every move event. Attached to
+    /// subsequent mouseDown/mouseUp so the initial click of a stroke carries
+    /// the real touch pressure — otherwise drawing apps paint a max-pressure
+    /// blob at the stroke start.
+    public private(set) var lastFields: TabletFields?
+
+    public init(state: ButtonState = ButtonState(), lastFields: TabletFields? = nil) {
         self.state = state
+        self.lastFields = lastFields
     }
 
     /// Processes a single ``StylusEvent`` and returns the ordered list of
@@ -42,6 +49,7 @@ public struct StrokeStateMachine {
         switch event {
         case let .move(_, _, pressure, tiltX, tiltY):
             let fields = TabletFields(pressure: pressure, tiltX: tiltX, tiltY: tiltY)
+            lastFields = fields
             if state.primaryDown {
                 return [.dragged(point: point, button: .left, fields: fields)]
             }
@@ -56,12 +64,18 @@ public struct StrokeStateMachine {
 
             var actions: [StrokeAction] = []
             if newPrimary != state.primaryDown {
-                actions.append(newPrimary ? .mouseDown(point: point, button: .left)
-                                           : .mouseUp(point: point, button: .left))
+                actions.append(
+                    newPrimary
+                        ? .mouseDown(point: point, button: .left, fields: lastFields)
+                        : .mouseUp(point: point, button: .left, fields: lastFields)
+                )
             }
             if newSecondary != state.secondaryDown {
-                actions.append(newSecondary ? .mouseDown(point: point, button: .right)
-                                            : .mouseUp(point: point, button: .right))
+                actions.append(
+                    newSecondary
+                        ? .mouseDown(point: point, button: .right, fields: lastFields)
+                        : .mouseUp(point: point, button: .right, fields: lastFields)
+                )
             }
             state.primaryDown = newPrimary
             state.secondaryDown = newSecondary
@@ -77,8 +91,8 @@ public struct StrokeStateMachine {
 public enum StrokeAction: Equatable, Sendable {
     case moved(point: CGPoint, fields: TabletFields)
     case dragged(point: CGPoint, button: CGMouseButton, fields: TabletFields)
-    case mouseDown(point: CGPoint, button: CGMouseButton)
-    case mouseUp(point: CGPoint, button: CGMouseButton)
+    case mouseDown(point: CGPoint, button: CGMouseButton, fields: TabletFields?)
+    case mouseUp(point: CGPoint, button: CGMouseButton, fields: TabletFields?)
     case proximity(entering: Bool)
 }
 

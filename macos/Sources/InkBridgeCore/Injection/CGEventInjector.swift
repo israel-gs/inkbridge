@@ -1,6 +1,9 @@
 import CoreGraphics
 import ApplicationServices
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Concrete ``Injector`` that posts real CGEvents to the HID event tap.
 ///
@@ -20,6 +23,7 @@ public final class CGEventInjector: Injector {
     private var stateMachine = StrokeStateMachine()
     private let stateLock = NSLock()
     private let eventSource: CGEventSource?
+    private var proximityEntered = false
 
     public init() {
         self.isTrusted = AXIsProcessTrustedWithOptions(nil)
@@ -41,6 +45,21 @@ public final class CGEventInjector: Injector {
             throw InjectorError.notTrusted
         }
 
+        // Ensure AppKit has a tablet-proximity context before ANY tablet-tagged
+        // mouse event arrives. Drawing apps (Krita, Photoshop, Affinity) gate
+        // pressure/tilt recognition on a prior proximity-enter with valid
+        // vendor + capability metadata. We synthesise one lazily on the first
+        // event if Android did not send a STYLUS_PROXIMITY enter frame.
+        stateLock.lock()
+        let needsImplicitProximity = !proximityEntered && !isProximityEvent(event)
+        stateLock.unlock()
+        if needsImplicitProximity {
+            try postProximity(entering: true)
+            stateLock.lock()
+            proximityEntered = true
+            stateLock.unlock()
+        }
+
         // Route the event through the state machine under a lock so concurrent
         // transport callbacks produce a consistent down/dragged/up sequence.
         let actions: [StrokeAction] = {
@@ -52,6 +71,17 @@ public final class CGEventInjector: Injector {
         for action in actions {
             try post(action)
         }
+
+        if case let .proximity(entering) = event {
+            stateLock.lock()
+            proximityEntered = entering
+            stateLock.unlock()
+        }
+    }
+
+    private func isProximityEvent(_ event: StylusEvent) -> Bool {
+        if case .proximity = event { return true }
+        return false
     }
 
     // MARK: - Private
@@ -65,18 +95,20 @@ public final class CGEventInjector: Injector {
             let type: CGEventType = (button == .left) ? .leftMouseDragged : .rightMouseDragged
             try postMouseLike(type: type, point: point, button: button, fields: fields)
 
-        case let .mouseDown(point, button):
+        case let .mouseDown(point, button, fields):
             let type: CGEventType = (button == .left) ? .leftMouseDown : .rightMouseDown
-            try postMouseLike(type: type, point: point, button: button, fields: nil)
+            try postMouseLike(type: type, point: point, button: button, fields: fields)
 
-        case let .mouseUp(point, button):
+        case let .mouseUp(point, button, fields):
             let type: CGEventType = (button == .left) ? .leftMouseUp : .rightMouseUp
-            try postMouseLike(type: type, point: point, button: button, fields: nil)
+            try postMouseLike(type: type, point: point, button: button, fields: fields)
 
         case let .proximity(entering):
             try postProximity(entering: entering)
         }
     }
+
+    private static let tabletDeviceID: Int64 = 1
 
     private func postMouseLike(
         type: CGEventType,
@@ -84,10 +116,11 @@ public final class CGEventInjector: Injector {
         button: CGMouseButton,
         fields: TabletFields?
     ) throws {
-        // NOTE: synthetic leftMouseDown/Dragged/Up posted here are silently
-        // dropped on macOS 14+ for apps without a Developer ID and proper
-        // entitlements. mouseMoved works. Strokes in drawing apps will not
-        // register until the app is signed for distribution. See design doc.
+        // Emit the event as a tablet-subtyped mouse event so (a) macOS treats
+        // it as originating from a tablet rather than a "raw" synthetic click
+        // (which is aggressively filtered on macOS 14+ for unentitled apps),
+        // and (b) AppKit propagates tabletPoint fields to drawing apps, which
+        // only read pressure/tilt from subtype=tabletPoint events.
         guard let cgEvent = CGEvent(
             mouseEventSource: eventSource,
             mouseType: type,
@@ -104,16 +137,53 @@ public final class CGEventInjector: Injector {
             break
         }
 
+        // Tag every mouse-like stroke event as a tablet event. Even moveOnly
+        // events benefit from the subtype because the tablet proximity state
+        // is tied to consistent device id + subtype across the event stream.
+        cgEvent.setIntegerValueField(.mouseEventSubtype, value: Self.tabletPointSubtypeRawValue)
+        cgEvent.setIntegerValueField(.tabletEventDeviceID, value: Self.tabletDeviceID)
+
         if let fields = fields {
-            cgEvent.setDoubleValueField(.tabletEventPointPressure, value: Double(fields.pressure) / 65535.0)
+            // Pressure: u16 [0, 65535] → normalized double [0.0, 1.0].
+            let normalizedPressure = Double(fields.pressure) / 65535.0
+            cgEvent.setDoubleValueField(.tabletEventPointPressure, value: normalizedPressure)
+            // Some AppKit consumers also read the integer pressure field on the
+            // mouse event itself. Scale to 0..255 (NSEvent pressure is typically
+            // 0..1 but the CG field is integer-scaled internally).
+            cgEvent.setIntegerValueField(.mouseEventPressure, value: Int64(normalizedPressure * 255.0))
+
             cgEvent.setDoubleValueField(.tabletEventTiltX, value: Double(fields.tiltX) / 9000.0)
             cgEvent.setDoubleValueField(.tabletEventTiltY, value: Double(fields.tiltY) / 9000.0)
             cgEvent.setIntegerValueField(.tabletEventPointX, value: Int64(point.x))
             cgEvent.setIntegerValueField(.tabletEventPointY, value: Int64(point.y))
+            cgEvent.setDoubleValueField(.tabletEventRotation, value: 0)
         }
 
         cgEvent.post(tap: .cgSessionEventTap)
     }
+
+    /// NSEvent.EventSubtype.tabletPoint.rawValue = 1. Hard-coded to avoid a
+    /// build-time AppKit dependency in tests that don't need the UI layer.
+    #if canImport(AppKit)
+    private static let tabletPointSubtypeRawValue: Int64 = Int64(NSEvent.EventSubtype.tabletPoint.rawValue)
+    #else
+    private static let tabletPointSubtypeRawValue: Int64 = 1
+    #endif
+
+    // Simulated Wacom-compatible tablet identity. Capability mask advertises
+    // support for the fields we actually set (pressure + tilt + absolute x/y).
+    // Drawing apps check this bitmask before reading the corresponding fields.
+    private static let simulatedVendorID: Int64 = 0x056A                // Wacom
+    private static let simulatedTabletID: Int64 = 0x0001
+    private static let simulatedPointerID: Int64 = 0x0001
+    private static let simulatedSystemTabletID: Int64 = 0x0001
+    private static let simulatedVendorPointerType: Int64 = 0x0802       // Pro Pen
+    private static let simulatedPointerSerial: Int64 = 0x0001
+    private static let simulatedUniqueID: Int64 = 0x0000_0001_0001
+    /// kCGTabletEventPointButtons bit0 (tip) + bit1 (button) = 0x3, plus
+    /// bits reserved for pressure (4), tilt-x (5), tilt-y (6), abs-x (13),
+    /// abs-y (14), abs-z (15). See IOHIDEventTypes CapabilityMask constants.
+    private static let simulatedCapabilityMask: Int64 = 0x0000_E063
 
     private func postProximity(entering: Bool) throws {
         guard let cgEvent = CGEvent(source: eventSource) else {
@@ -121,8 +191,16 @@ public final class CGEventInjector: Injector {
         }
         cgEvent.type = .tabletProximity
         cgEvent.setIntegerValueField(.tabletProximityEventEnterProximity, value: entering ? 1 : 0)
-        cgEvent.setIntegerValueField(.tabletProximityEventPointerType, value: 1)
-        cgEvent.setIntegerValueField(.tabletProximityEventDeviceID, value: 0x0001)
+        cgEvent.setIntegerValueField(.tabletProximityEventPointerType, value: 1)  // pen tip
+        cgEvent.setIntegerValueField(.tabletProximityEventDeviceID, value: Self.tabletDeviceID)
+        cgEvent.setIntegerValueField(.tabletProximityEventVendorID, value: Self.simulatedVendorID)
+        cgEvent.setIntegerValueField(.tabletProximityEventTabletID, value: Self.simulatedTabletID)
+        cgEvent.setIntegerValueField(.tabletProximityEventPointerID, value: Self.simulatedPointerID)
+        cgEvent.setIntegerValueField(.tabletProximityEventSystemTabletID, value: Self.simulatedSystemTabletID)
+        cgEvent.setIntegerValueField(.tabletProximityEventVendorPointerType, value: Self.simulatedVendorPointerType)
+        cgEvent.setIntegerValueField(.tabletProximityEventVendorPointerSerialNumber, value: Self.simulatedPointerSerial)
+        cgEvent.setIntegerValueField(.tabletProximityEventVendorUniqueID, value: Self.simulatedUniqueID)
+        cgEvent.setIntegerValueField(.tabletProximityEventCapabilityMask, value: Self.simulatedCapabilityMask)
         cgEvent.post(tap: .cgSessionEventTap)
     }
 }

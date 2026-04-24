@@ -179,6 +179,43 @@ final class InkBridgeServerTests: XCTestCase {
         XCTAssertEqual(server.stats.packetsReceived, 1)
     }
 
+    // MARK: - Latency tracker integration
+
+    func testLatencySnapshotUpdatesAfterFrame() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(server.latency.samples, 0)
+
+        udpListener.emit(try makeMoveFrame(x: 0.5, y: 0.5))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(server.latency.samples, 1)
+        // arrivalToInject is Mac-internal and must be ≥ 0 ms.
+        XCTAssertGreaterThanOrEqual(server.latency.arrivalToInjectP50Ms, 0)
+    }
+
+    func testLatencyAccumulatesAcrossMultipleFrames() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        for i in 0..<5 {
+            udpListener.emit(try makeMoveFrame(x: Float(i) * 0.1, y: 0.5, seq: UInt32(i)))
+            // Small delay per frame so each crosses the 100ms throttle boundary
+            // on at least the first and last frames; drives a fresh `snapshot()`
+            // publish. (Tracker records every frame, publishes are throttled.)
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        // Wait past the throttle so the final frame's snapshot publishes.
+        try await Task.sleep(nanoseconds: 150_000_000)
+        // Force a final frame to trigger the throttled publish of all 5 samples.
+        udpListener.emit(try makeMoveFrame(x: 0.5, y: 0.5, seq: 99))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // After 6 records + throttled publish, latency.samples should equal 6.
+        XCTAssertEqual(server.latency.samples, 6)
+    }
+
     func testInjectionFailureDoesNotChangeState() async throws {
         server.start(port: 4545)
         try await Task.sleep(nanoseconds: 50_000_000)
