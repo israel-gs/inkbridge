@@ -16,6 +16,7 @@ DerivedData/
 *.mode2v3
 *.perspectivev3
 .build/
+.swiftpm/
 Package.resolved
 macos/build/
 

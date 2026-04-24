@@ -1,11 +1,15 @@
 package com.inkbridge.ui.screens
 
 import android.view.MotionEvent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -15,7 +19,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInteropFilter
@@ -25,18 +31,23 @@ import androidx.compose.ui.unit.dp
 import com.inkbridge.app.ui.theme.InkBridgeTheme
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.TransportKind
+import com.inkbridge.ui.theme.CanvasBackground
+import com.inkbridge.ui.theme.CanvasDot
+import com.inkbridge.ui.theme.CanvasDotActive
+import com.inkbridge.ui.theme.CanvasFeedbackGlow
+import com.inkbridge.ui.theme.InkOutline
 
 /**
  * Full-bleed capture surface that intercepts stylus MotionEvents.
  *
+ * Visual design:
+ * - Pure OLED-black background.
+ * - Subtle dot grid pattern (32dp pitch) — brighter when Connected.
+ * - Rounded corners, hairline border that animates on active/inactive.
+ * - Cyan radial-glow feedback at current stylus position with pressure scaling.
+ *
  * Active only when [connectionState] is [ConnectionState.Connected] (ui.md R4).
- *
- * No ink rendering — this is a transparent forwarding surface. Visual feedback:
- * - Subtle border distinguishing the capture area.
- * - Pressure-opacity feedback circle at the last stylus contact point.
- *
- * @param connectionState Current connection state. Events are ignored unless Connected.
- * @param onMotionEvent   Callback with the raw MotionEvent and actual view dimensions (px).
+ * No ink rendering — this is a transparent forwarding surface.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -50,8 +61,11 @@ fun CaptureSurface(
     var viewWidth by remember { mutableIntStateOf(1) }
     var viewHeight by remember { mutableIntStateOf(1) }
 
-    val borderColor = MaterialTheme.colorScheme.primary.copy(alpha = if (isActive) 0.3f else 0.08f)
-    val feedbackColor = MaterialTheme.colorScheme.primary
+    val borderAlpha by animateFloatAsState(
+        targetValue = if (isActive) 0.6f else 0.2f,
+        animationSpec = tween(durationMillis = 240),
+        label = "captureBorderAlpha",
+    )
 
     var feedbackOffset by remember { mutableStateOf(Offset.Zero) }
     var feedbackPressure by remember { mutableFloatStateOf(0f) }
@@ -60,11 +74,18 @@ fun CaptureSurface(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(CanvasBackground)
+            .border(
+                width = 1.dp,
+                color = InkOutline.copy(alpha = borderAlpha),
+                shape = RoundedCornerShape(16.dp),
+            )
             .onSizeChanged { size ->
                 viewWidth = size.width.coerceAtLeast(1)
                 viewHeight = size.height.coerceAtLeast(1)
             }
-            .border(width = 1.dp, color = borderColor)
             .pointerInteropFilter { event ->
                 if (!isActive) return@pointerInteropFilter false
                 onMotionEvent(event, viewWidth, viewHeight)
@@ -82,33 +103,83 @@ fun CaptureSurface(
                 true
             },
     ) {
+        // Dot grid — drawn once per layout, scales with view size.
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawDotGrid(isActive = isActive)
+        }
+
+        // Cyan glow feedback — only while a stylus is in contact.
         if (showFeedback && isActive) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                drawFeedbackCircle(feedbackOffset, feedbackPressure, feedbackColor)
+                drawFeedbackGlow(feedbackOffset, feedbackPressure)
             }
         }
     }
 }
 
-private fun DrawScope.drawFeedbackCircle(
-    offset: Offset,
-    pressure: Float,
-    color: Color,
-) {
-    val radius = 12.dp.toPx() + pressure * 4.dp.toPx()
+// ── Drawing helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Draws a dot grid with 32dp pitch covering the canvas.
+ * Dots brighten slightly when the surface is Connected (active state).
+ */
+private fun DrawScope.drawDotGrid(isActive: Boolean) {
+    val pitch = 32.dp.toPx()
+    val radius = 1.dp.toPx()
+    val color = if (isActive) CanvasDotActive else CanvasDot
+
+    // Offset by half-pitch so the grid visually centers within the rounded rect.
+    val offsetX = pitch / 2f
+    val offsetY = pitch / 2f
+
+    var y = offsetY
+    while (y < size.height) {
+        var x = offsetX
+        while (x < size.width) {
+            drawCircle(color = color, radius = radius, center = Offset(x, y))
+            x += pitch
+        }
+        y += pitch
+    }
+}
+
+/**
+ * Radial glow under the stylus tip. Larger + more intense with pressure.
+ * Not a stroke — purely UX confirmation that input is captured.
+ */
+private fun DrawScope.drawFeedbackGlow(offset: Offset, pressure: Float) {
+    val baseRadius = 16.dp.toPx()
+    val pressureRadius = baseRadius + pressure * 24.dp.toPx()
+    val intensity = (0.15f + pressure * 0.55f).coerceIn(0.15f, 0.7f)
+
+    // Soft outer halo.
     drawCircle(
-        color = color.copy(alpha = (pressure * 0.4f).coerceIn(0.05f, 0.4f)),
-        radius = radius,
+        brush = Brush.radialGradient(
+            colors = listOf(
+                CanvasFeedbackGlow.copy(alpha = intensity),
+                CanvasFeedbackGlow.copy(alpha = 0f),
+            ),
+            center = offset,
+            radius = pressureRadius * 2f,
+        ),
+        radius = pressureRadius * 2f,
+        center = offset,
+    )
+
+    // Bright core.
+    drawCircle(
+        color = CanvasFeedbackGlow.copy(alpha = (intensity + 0.2f).coerceAtMost(0.95f)),
+        radius = pressureRadius * 0.45f,
         center = offset,
     )
 }
 
 // ── Previews ──────────────────────────────────────────────────────────────────
 
-@Preview(name = "CaptureSurface — active light", showBackground = true)
+@Preview(name = "CaptureSurface — active", showBackground = true, backgroundColor = 0xFF0A0A0A)
 @Composable
 private fun PreviewCaptureSurfaceActive() {
-    InkBridgeTheme(darkTheme = false, dynamicColor = false) {
+    InkBridgeTheme {
         CaptureSurface(
             connectionState = ConnectionState.Connected(TransportKind.WIFI_UDP),
             onMotionEvent = { _, _, _ -> },
@@ -116,10 +187,10 @@ private fun PreviewCaptureSurfaceActive() {
     }
 }
 
-@Preview(name = "CaptureSurface — inactive light", showBackground = true)
+@Preview(name = "CaptureSurface — inactive", showBackground = true, backgroundColor = 0xFF0A0A0A)
 @Composable
 private fun PreviewCaptureSurfaceInactive() {
-    InkBridgeTheme(darkTheme = false, dynamicColor = false) {
+    InkBridgeTheme {
         CaptureSurface(
             connectionState = ConnectionState.Disconnected,
             onMotionEvent = { _, _, _ -> },
