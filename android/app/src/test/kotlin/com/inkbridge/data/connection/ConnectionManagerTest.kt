@@ -3,9 +3,16 @@ package com.inkbridge.data.connection
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusTransport
 import com.inkbridge.domain.model.TransportKind
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -30,6 +37,8 @@ class ConnectionManagerTest {
     ) : StylusTransport {
         private val _isConnected = MutableStateFlow(false)
         override val isConnected: StateFlow<Boolean> = _isConnected
+        val _errors = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)
+        override val errors: SharedFlow<Throwable> = _errors
 
         var connectCalled = false
         var closeCalled = false
@@ -172,5 +181,63 @@ class ConnectionManagerTest {
         manager.connect("192.168.1.1", 4545, TransportKind.WIFI_UDP)
 
         assertTrue(fake.closeCalled, "Transport must be closed after failed connect")
+    }
+
+    // ── Bug 3: mid-session disconnect detection ────────────────────────────────
+
+    /**
+     * When the transport emits an error after a successful connect, [ConnectionManager]
+     * must transition state to [ConnectionState.Error]. This simulates a TCP server
+     * dying after the connection was established (broken pipe / cable unplug).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `transport error after connect transitions state to Error`() = runTest(UnconfinedTestDispatcher()) {
+        val fake = FakeTransport(Result.success(Unit))
+        val testScope = TestScope(UnconfinedTestDispatcher())
+        val factory = ConnectionManager.TransportFactory { _, _, _ -> fake }
+        val manager = ConnectionManager(factory, errorScope = testScope)
+
+        manager.connect("192.168.1.1", 4545, TransportKind.USB_TCP)
+        assertEquals(ConnectionState.Connected(TransportKind.USB_TCP), manager.state.value)
+
+        // Simulate the transport detecting a broken pipe.
+        fake._errors.emit(java.io.IOException("Connection reset by peer"))
+        testScope.advanceUntilIdle()
+
+        val state = manager.state.value
+        assertTrue(state is ConnectionState.Error, "State must be Error after transport error, got $state")
+        assertTrue(
+            (state as ConnectionState.Error).reason.isNotEmpty(),
+            "Error reason must not be empty",
+        )
+    }
+
+    /**
+     * After an explicit [ConnectionManager.disconnect], transport errors must NOT
+     * transition state back to Error (the watcher coroutine is cancelled on disconnect).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `transport error after disconnect does not re-enter Error state`() = runTest(UnconfinedTestDispatcher()) {
+        val fake = FakeTransport(Result.success(Unit))
+        val testScope = TestScope(UnconfinedTestDispatcher())
+        val factory = ConnectionManager.TransportFactory { _, _, _ -> fake }
+        val manager = ConnectionManager(factory, errorScope = testScope)
+
+        manager.connect("192.168.1.1", 4545, TransportKind.USB_TCP)
+        manager.disconnect()
+
+        assertEquals(ConnectionState.Disconnected, manager.state.value)
+
+        // Fire an error AFTER the user disconnected — must be ignored.
+        fake._errors.tryEmit(java.io.IOException("Stale error"))
+        testScope.advanceUntilIdle()
+
+        assertEquals(
+            ConnectionState.Disconnected,
+            manager.state.value,
+            "Stale transport error after disconnect must NOT change state",
+        )
     }
 }

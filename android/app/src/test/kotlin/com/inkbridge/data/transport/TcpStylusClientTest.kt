@@ -1,8 +1,11 @@
 package com.inkbridge.data.transport
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.ServerSocket
@@ -105,5 +108,53 @@ class TcpStylusClientTest {
         val result = client.connect()
         assertFalse(result.isSuccess, "connect to refused port must return failure")
         assertFalse(client.isConnected.value)
+    }
+
+    // ── Bug 3: send failure emits to errors and sets isConnected=false ─────────
+
+    /**
+     * When [TcpStylusClient.send] fails (e.g. broken pipe after server dies),
+     * [isConnected] must transition to false AND the cause must be emitted to
+     * [errors] so [ConnectionManager] can detect mid-session disconnects.
+     */
+    @Test
+    fun `send failure sets isConnected to false and emits to errors`() = runBlocking {
+        val server = ServerSocket(0)
+        val port = server.localPort
+        var serverConn: java.net.Socket? = null
+        val acceptThread = Thread {
+            runCatching { serverConn = server.accept() }
+        }
+        acceptThread.start()
+
+        val client = TcpStylusClient("127.0.0.1", port)
+        client.connect()
+        assertTrue(client.isConnected.value)
+        acceptThread.join(3_000)
+
+        // Collect the first error asynchronously.
+        val errorDeferred = async { client.errors.first() }
+
+        // Abruptly close the server-side socket to cause a broken pipe on next write.
+        serverConn?.close()
+        server.close()
+
+        // Write enough data to trigger a broken-pipe flush. TCP may buffer small
+        // writes, so we retry until the OS delivers the RST.
+        var failureResult: Result<Unit> = Result.success(Unit)
+        val bigPayload = ByteArray(65536) { 0x01 }
+        repeat(5) {
+            if (failureResult.isSuccess) {
+                failureResult = client.send(bigPayload)
+                // Small delay to give the kernel time to process the RST.
+                @Suppress("BlockingMethodInNonBlockingContext")
+                Thread.sleep(50)
+            }
+        }
+
+        // Await the error with a reasonable timeout.
+        val error = kotlinx.coroutines.withTimeoutOrNull(2_000) { errorDeferred.await() }
+        assertNotNull(error, "errors flow must emit a Throwable after send failure")
+        assertFalse(client.isConnected.value, "isConnected must be false after send failure")
     }
 }

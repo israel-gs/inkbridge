@@ -109,6 +109,29 @@ public final class TCPListener: PacketListener {
         // Replace existing connection. transport.md R4.
         activeConnection?.cancel()
         activeConnection = connection
+
+        // Bug 3 (macOS fix): subscribe to the per-connection state so that a
+        // mid-session TCP drop (cable unplug, server crash) surfaces via the
+        // errors stream. Without this, the only signal was the receive callback
+        // error which may not arrive until the next attempted read. The
+        // stateUpdateHandler fires as soon as NW detects the broken connection.
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .failed(let error):
+                self.errorContinuation.yield(error)
+                if self.activeConnection === connection {
+                    self.activeConnection = nil
+                }
+            case .cancelled:
+                if self.activeConnection === connection {
+                    self.activeConnection = nil
+                }
+            default:
+                break
+            }
+        }
+
         connection.start(queue: .global(qos: .userInteractive))
 
         var buffer = Data()
@@ -164,7 +187,17 @@ public final class TCPListener: PacketListener {
             case 0x05: payloadSize = 4    // STYLUS_ZOOM (R13)
             case 0x06: payloadSize = 4    // CURSOR_DELTA
             default:
-                // Unknown type — cannot determine payload size. Discard entire buffer.
+                // Unknown type — cannot determine payload size, so the entire buffer
+                // must be discarded. This is a known limitation: without a
+                // magic-byte sentinel or a u16 length-prefix in the wire protocol,
+                // there is no safe way to resync the TCP stream after an unknown
+                // event_type. The discard strategy means any trailing valid frames
+                // in the same buffer are also lost.
+                //
+                // TODO(R12-R14): add a framing sentinel or length-prefix to the
+                // wire protocol so the receiver can skip unknown frames instead
+                // of discarding the entire buffer. See transport.md R12–R14 for
+                // the planned protocol revision.
                 errorContinuation.yield(ProtocolError.unknownType(got: eventType))
                 buffer.removeAll()
                 return

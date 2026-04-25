@@ -6,7 +6,9 @@ import com.inkbridge.domain.model.StylusTransport
 import com.inkbridge.domain.usecase.StreamStylus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -120,6 +122,7 @@ class ConnectionViewModelEmitOrderTest {
         val sentFrames = mutableListOf<ByteArray>()
         private val _connected = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = _connected
+        override val errors: SharedFlow<Throwable> = MutableSharedFlow()
         override suspend fun connect() = Result.success(Unit)
         override suspend fun close() { _connected.value = false }
         override suspend fun send(bytes: ByteArray): Result<Unit> {

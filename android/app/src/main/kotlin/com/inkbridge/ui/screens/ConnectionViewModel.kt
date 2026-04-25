@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 
@@ -474,13 +475,39 @@ class ConnectionViewModel(
                 trackpadCumMovement = 0f
                 trackpadActive = false
             }
+            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                // A second finger appeared. The ongoing 1-finger session is no longer
+                // valid. Re-seed prevX/Y from finger 0 in case it keeps moving, but
+                // keep trackpadActive = false so ACTION_MOVE is suppressed until a
+                // fresh 1-finger ACTION_DOWN re-arms the session.
+                trackpadPrevX = event.getX(0)
+                trackpadPrevY = event.getY(0)
+                trackpadCumMovement = 0f
+                trackpadActive = false
+            }
+            android.view.MotionEvent.ACTION_POINTER_UP -> {
+                // One finger lifted; the surviving finger becomes the new dominant.
+                // Re-seed its position so the next MOVE doesn't produce a stale delta,
+                // but keep trackpadActive = false until a fresh ACTION_DOWN re-arms.
+                trackpadPrevX = event.getX(0)
+                trackpadPrevY = event.getY(0)
+                trackpadCumMovement = 0f
+                trackpadActive = false
+            }
         }
     }
 
     override fun onCleared() {
         super.onCleared()
+        // Close the channel first so the consumer coroutine's `for job in emitChannel`
+        // loop terminates naturally when it drains the remaining items.
         emitChannel.close()
+        // Shut down the single-thread executor so the dedicated thread exits.
+        // This is best-effort: the executor will finish any already-running job first.
         emitExecutor.shutdown()
+        // Disconnect the transport. viewModelScope is already cancelled here, so we
+        // cannot use it — runBlocking is correct: we must not leave an open socket.
+        runBlocking { connectionManager.disconnect() }
     }
 
     // ── Stats data class ───────────────────────────────────────────────────────

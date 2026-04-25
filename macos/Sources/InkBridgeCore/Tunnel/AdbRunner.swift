@@ -60,29 +60,76 @@ public final class ProcessAdbRunner: AdbRunner, @unchecked Sendable {
         let stderr: String
     }
 
+    /// A wrapper that pairs a running ``Foundation.Process`` with an async wait-for-exit
+    /// and a synchronous `cancel()` that terminates the process. Using this wrapper
+    /// allows the timeout race branch to terminate the OS process — simply cancelling
+    /// the Swift Task does NOT deliver a signal to the child process, which would
+    /// otherwise leak as a zombie until natural termination (Bug 5 fix).
+    private actor ProcessHandle {
+        private let process: Process
+
+        init(process: Process) {
+            self.process = process
+        }
+
+        /// Terminate the process with SIGTERM. If it is still running 1 second
+        /// later, escalate to SIGINT. Used by the timeout branch.
+        func terminate() {
+            guard process.isRunning else { return }
+            process.terminate()
+            // Give the process up to 1 second to exit cleanly before escalating.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1) { [weak process] in
+                guard let p = process, p.isRunning else { return }
+                p.interrupt()
+            }
+        }
+    }
+
     private func run(arguments: [String]) async throws -> ProcessOutput {
-        // Use a Task with timeout rather than DispatchWorkItem to avoid
-        // Sendable issues with DispatchWorkItem.
         let timeoutSeconds = self.timeout
         let adbPath = self.adbPath
 
+        // Bug 5 fix: hold a reference to the spawned Process so the timeout branch
+        // can call process.terminate() directly. The handle is written synchronously
+        // on the main run-loop thread inside spawnProcess — before the continuation
+        // suspends — so the timeout task always finds it populated.
+        let handleBox = MutableBox<ProcessHandle>()
+
         return try await withThrowingTaskGroup(of: ProcessOutput.self) { group in
             group.addTask {
-                try await ProcessAdbRunner.spawnProcess(adbPath: adbPath, arguments: arguments)
+                try await ProcessAdbRunner.spawnProcess(
+                    adbPath: adbPath,
+                    arguments: arguments,
+                    handleBox: handleBox
+                )
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                // Bug 5 fix: terminate the OS process. Task.cancel() alone only
+                // cancels the Swift Task — the spawned process keeps running as a
+                // zombie until natural termination.
+                await handleBox.get()?.terminate()
                 throw AdbRunnerError.timeout
             }
 
-            // Return the first result (either the process output or timeout).
             let result = try await group.next()!
             group.cancelAll()
             return result
         }
     }
 
-    private static func spawnProcess(adbPath: String, arguments: [String]) async throws -> ProcessOutput {
+    /// Spawns the `adb` process, registers the ``ProcessHandle`` in `handleBox`
+    /// synchronously before suspending, then waits asynchronously for the process
+    /// to exit and returns its output.
+    ///
+    /// Registering the handle synchronously (before the continuation suspends)
+    /// guarantees the timeout task can always call `terminate()` even when the
+    /// OS process has not yet produced any output.
+    private static func spawnProcess(
+        adbPath: String,
+        arguments: [String],
+        handleBox: MutableBox<ProcessHandle>
+    ) async throws -> ProcessOutput {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: adbPath)
@@ -108,10 +155,29 @@ public final class ProcessAdbRunner: AdbRunner, @unchecked Sendable {
 
             do {
                 try process.run()
+                // Register the handle immediately after the process is started —
+                // before the continuation suspends — so the timeout branch can
+                // always terminate the process regardless of its runtime state.
+                // This is safe: `handleBox` is an actor, and `set` is called on a
+                // background dispatch queue from within a non-async context here.
+                // We use Task { } to bridge the actor call without blocking.
+                Task { await handleBox.set(ProcessHandle(process: process)) }
             } catch {
                 continuation.resume(throwing: AdbRunnerError.adbNotFound)
             }
         }
+    }
+
+    // MARK: - MutableBox
+
+    /// A thread-safe single-value box backed by an actor. Used to share the
+    /// ``ProcessHandle`` between the process task and the timeout task without
+    /// unsafe shared mutable state.
+    private actor MutableBox<T> {
+        private var value: T?
+
+        func set(_ value: T) { self.value = value }
+        func get() -> T? { value }
     }
 
     /// Parses `adb devices` stdout into a list of connected device serials.

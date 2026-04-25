@@ -2,8 +2,11 @@ package com.inkbridge.data.transport
 
 import com.inkbridge.domain.model.StylusTransport
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
@@ -38,6 +41,9 @@ class TcpStylusClient(
     private val _isConnected = MutableStateFlow(false)
     override val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+    private val _errors = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)
+    override val errors: SharedFlow<Throwable> = _errors.asSharedFlow()
+
     @Volatile
     private var socket: Socket? = null
 
@@ -61,6 +67,16 @@ class TcpStylusClient(
             val out = outputStream ?: error("Not connected")
             out.write(bytes)
             out.flush()
+        }.also { result ->
+            // On I/O failure (broken pipe, connection reset, etc.), mark the socket as
+            // disconnected and surface the cause to subscribers so they can react
+            // (e.g. ConnectionManager transitions to Error state). transport.md R4.
+            result.exceptionOrNull()?.let { cause ->
+                if (_isConnected.value) {
+                    _isConnected.value = false
+                    _errors.tryEmit(cause)
+                }
+            }
         }
     }
 

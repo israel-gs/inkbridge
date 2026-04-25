@@ -2,8 +2,11 @@ package com.inkbridge.data.transport
 
 import com.inkbridge.domain.model.StylusTransport
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -41,6 +44,11 @@ class UdpStylusClient(
 
     private val _isConnected = MutableStateFlow(false)
     override val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+
+    // UDP is fire-and-forget; send errors don't indicate a broken connection the way
+    // TCP does, but we expose the flow to satisfy the StylusTransport contract.
+    private val _errors = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)
+    override val errors: SharedFlow<Throwable> = _errors.asSharedFlow()
 
     @Volatile
     private var socket: DatagramSocket? = null

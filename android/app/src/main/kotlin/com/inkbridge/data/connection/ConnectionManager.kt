@@ -5,9 +5,13 @@ import com.inkbridge.data.transport.UdpStylusClient
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusTransport
 import com.inkbridge.domain.model.TransportKind
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Manages transport lifecycle and exposes [ConnectionState] as a [StateFlow].
@@ -21,11 +25,18 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * No auto-reconnect in this change (transport.md R6).
  *
+ * ## Mid-session disconnect detection (Bug 3 fix)
+ *
+ * After a successful connect, [ConnectionManager] subscribes to [StylusTransport.errors].
+ * The first error transitions state to [ConnectionState.Error] so the UI immediately
+ * reflects a broken connection instead of remaining stuck in "Connected".
+ *
  * Thread safety: [connect] and [disconnect] are suspending and must be called from
  * a single coroutine (ViewModel scope). The StateFlow is safe for multiple observers.
  */
 class ConnectionManager(
     private val transportFactory: TransportFactory = DefaultTransportFactory,
+    private val errorScope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
 
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -33,6 +44,9 @@ class ConnectionManager(
 
     @Volatile
     private var activeTransport: StylusTransport? = null
+
+    /** Tracks the coroutine that watches [StylusTransport.errors] for the active transport. */
+    private var errorWatchJob: Job? = null
 
     /**
      * Establishes a connection to [host]:[port] using [kind] transport.
@@ -53,6 +67,21 @@ class ConnectionManager(
         if (result.isSuccess) {
             activeTransport = transport
             _state.value = ConnectionState.Connected(kind)
+            // Watch for mid-session I/O errors. The first error transitions state to
+            // Error so the UI stops showing "Connected" after a cable unplug or server
+            // crash. transport.md R4. Cancel any prior watcher from a previous connect.
+            errorWatchJob?.cancel()
+            errorWatchJob = errorScope.launch {
+                transport.errors.collect { cause ->
+                    // Only transition if we are still in Connected state — avoid
+                    // overwriting an explicit user-initiated Disconnected.
+                    if (_state.value is ConnectionState.Connected) {
+                        _state.value = ConnectionState.Error(
+                            cause.message ?: "Connection lost",
+                        )
+                    }
+                }
+            }
         } else {
             transport.close()
             _state.value = ConnectionState.Error(
@@ -66,6 +95,8 @@ class ConnectionManager(
 
     /** Closes the active transport and transitions to [ConnectionState.Disconnected]. */
     suspend fun disconnect() {
+        errorWatchJob?.cancel()
+        errorWatchJob = null
         activeTransport?.close()
         activeTransport = null
         _state.value = ConnectionState.Disconnected

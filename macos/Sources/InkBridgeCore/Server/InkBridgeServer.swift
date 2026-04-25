@@ -102,31 +102,32 @@ public final class InkBridgeServer: ObservableObject {
         let udpErrors = udpListener.errors
         let tcpErrors = tcpListener.errors
 
-        udpTask = Task { [weak self] in
+        // Bug 6 fix: use @MainActor Task closure instead of Task + inner
+        // MainActor.run. The class is @MainActor so `self` is already isolated
+        // to the main actor; a nested MainActor.run adds an unnecessary hop that
+        // pays a lock-acquisition cost on every frame at 240 Hz.
+        udpTask = Task { @MainActor [weak self] in
             for await frame in udpFrames {
-                guard let self else { return }
-                await MainActor.run { self.processFrame(frame) }
+                self?.processFrame(frame)
             }
         }
 
-        tcpTask = Task { [weak self] in
+        tcpTask = Task { @MainActor [weak self] in
             for await frame in tcpFrames {
-                guard let self else { return }
-                await MainActor.run { self.processFrame(frame) }
+                self?.processFrame(frame)
             }
         }
 
-        udpErrorTask = Task { [weak self] in
+        // Listener errors (decode failures, NW transport errors) → packetsDropped.
+        udpErrorTask = Task { @MainActor [weak self] in
             for await _ in udpErrors {
-                guard let self else { return }
-                await MainActor.run { self.stats.packetsDropped += 1 }
+                self?.stats.packetsDropped += 1
             }
         }
 
-        tcpErrorTask = Task { [weak self] in
+        tcpErrorTask = Task { @MainActor [weak self] in
             for await _ in tcpErrors {
-                guard let self else { return }
-                await MainActor.run { self.stats.packetsDropped += 1 }
+                self?.stats.packetsDropped += 1
             }
         }
     }
@@ -169,7 +170,9 @@ public final class InkBridgeServer: ObservableObject {
             } catch InjectorError.notTrusted {
                 state = .degraded(reason: "Accessibility permission required")
             } catch {
-                stats.packetsDropped += 1
+                // Injection failure — the frame was decoded correctly but the OS
+                // rejected the event. Count separately from listener/decode errors.
+                stats.injectionFailures += 1
             }
             recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
             return
@@ -180,7 +183,7 @@ public final class InkBridgeServer: ObservableObject {
             } catch InjectorError.notTrusted {
                 state = .degraded(reason: "Accessibility permission required")
             } catch {
-                stats.packetsDropped += 1
+                stats.injectionFailures += 1
             }
             recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
             return
@@ -191,7 +194,7 @@ public final class InkBridgeServer: ObservableObject {
             } catch InjectorError.notTrusted {
                 state = .degraded(reason: "Accessibility permission required")
             } catch {
-                stats.packetsDropped += 1
+                stats.injectionFailures += 1
             }
             // Sync the server's lastPoint with the system cursor so a follow-up
             // BUTTON frame (tap = click) lands where the cursor actually is,
@@ -224,7 +227,8 @@ public final class InkBridgeServer: ObservableObject {
             state = .degraded(reason: "Accessibility permission required")
         } catch {
             // R8: single injection failure must not change server state.
-            stats.packetsDropped += 1
+            // Count as injectionFailures (OS rejection), not packetsDropped (decode error).
+            stats.injectionFailures += 1
         }
 
         recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)

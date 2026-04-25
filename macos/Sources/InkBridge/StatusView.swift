@@ -132,9 +132,9 @@ struct StatusView: View {
 
     private var statsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            statRow(label: "Packets received", value: "\(viewModel.stats.packetsReceived)")
-            statRow(label: "Packets dropped",  value: "\(viewModel.stats.packetsDropped)")
-            statRow(label: "Bytes received",   value: formatBytes(viewModel.stats.bytesReceived))
+            statRow(label: "Packets received",   value: "\(viewModel.stats.packetsReceived)")
+            statRow(label: "Packets dropped",    value: "\(viewModel.stats.packetsDropped)")
+            statRow(label: "Injection failures", value: "\(viewModel.stats.injectionFailures)")
         }
     }
 
@@ -149,12 +149,6 @@ struct StatusView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
-    }
-
-    private func formatBytes(_ bytes: UInt64) -> String {
-        if bytes < 1024 { return "\(bytes) B" }
-        if bytes < 1_048_576 { return String(format: "%.1f KB", Double(bytes) / 1024) }
-        return String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 }
 

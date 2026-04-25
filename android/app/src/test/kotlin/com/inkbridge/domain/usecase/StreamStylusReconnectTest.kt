@@ -2,7 +2,9 @@ package com.inkbridge.domain.usecase
 
 import com.inkbridge.domain.model.StylusSample
 import com.inkbridge.domain.model.StylusTransport
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -20,6 +22,7 @@ class StreamStylusReconnectTest {
         val sentFrames = mutableListOf<ByteArray>()
         private val _connected = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = _connected
+        override val errors: SharedFlow<Throwable> = MutableSharedFlow()
         override suspend fun connect() = Result.success(Unit)
         override suspend fun close() { _connected.value = false }
         override suspend fun send(bytes: ByteArray): Result<Unit> {
@@ -32,6 +35,7 @@ class StreamStylusReconnectTest {
         var sendAttempts = 0
         private val _connected = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = _connected
+        override val errors: SharedFlow<Throwable> = MutableSharedFlow()
         override suspend fun connect() = Result.success(Unit)
         override suspend fun close() { _connected.value = false }
         override suspend fun send(bytes: ByteArray): Result<Unit> {

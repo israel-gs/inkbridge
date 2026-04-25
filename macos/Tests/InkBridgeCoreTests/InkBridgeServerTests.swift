@@ -310,6 +310,52 @@ final class InkBridgeServerTests: XCTestCase {
         } else {
             XCTFail("Expected .listening after injection failure, got \(server.state)")
         }
-        XCTAssertEqual(server.stats.packetsDropped, 1)
+        // Injection failure increments injectionFailures, not packetsDropped.
+        // packetsDropped tracks listener/decode errors; injectionFailures tracks OS rejections.
+        XCTAssertEqual(server.stats.injectionFailures, 1)
+    }
+
+    // MARK: - Bug 4: Stats counter separation
+
+    /// packetsDropped increments only for listener/decode errors, NOT for injection failures.
+    func testPacketsDroppedDoesNotIncrementOnInjectionFailure() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        injector.nextError = .eventCreationFailed
+        udpListener.emit(try makeMoveFrame(x: 0.5, y: 0.5))
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(server.stats.packetsDropped, 0,
+            "packetsDropped must be 0 — injection failures go to injectionFailures")
+        XCTAssertEqual(server.stats.injectionFailures, 1,
+            "injectionFailures must be 1 after one injection error")
+    }
+
+    /// Listener-level errors (e.g. decode failure via error stream) increment packetsDropped,
+    /// not injectionFailures.
+    func testPacketsDroppedIncrementsOnListenerError() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Simulate a listener-level error by emitting to the error stream directly.
+        udpListener.emitError(ProtocolError.unknownType(got: 0xFF))
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(server.stats.packetsDropped, 1,
+            "packetsDropped must increment on listener/decode errors")
+        XCTAssertEqual(server.stats.injectionFailures, 0,
+            "injectionFailures must be 0 for listener errors")
+    }
+
+    /// Stats.bytesReceived has been removed (was never incremented). Verify the struct
+    /// compiles and initialises correctly with the new field set.
+    func testStatsBytesReceivedFieldRemoved() {
+        let s = Stats(packetsReceived: 1, packetsDropped: 2, injectionFailures: 3)
+        XCTAssertEqual(s.packetsReceived, 1)
+        XCTAssertEqual(s.packetsDropped, 2)
+        XCTAssertEqual(s.injectionFailures, 3)
     }
 }

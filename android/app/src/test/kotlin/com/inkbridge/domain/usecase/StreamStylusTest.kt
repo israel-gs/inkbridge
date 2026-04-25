@@ -6,7 +6,9 @@ import com.inkbridge.protocol.BinaryStylusCodec
 import com.inkbridge.protocol.EventType
 import com.inkbridge.protocol.Flags
 import com.inkbridge.protocol.StylusEvent
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,6 +33,7 @@ class StreamStylusTest {
 
         private val _isConnected = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = _isConnected
+        override val errors: SharedFlow<Throwable> = MutableSharedFlow()
 
         override suspend fun connect(): Result<Unit> = Result.success(Unit)
         override suspend fun close() { _isConnected.value = false }
