@@ -238,6 +238,7 @@ struct StatusView: View {
 private struct SettingsSheet: View {
     @ObservedObject var viewModel: ServerViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var overrideRefreshTick = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -262,14 +263,145 @@ private struct SettingsSheet: View {
                 }
             }
 
-            Spacer()
+            Divider()
+
+            pressureCurvesSection
+
+            Spacer(minLength: 0)
 
             Button("Done") { dismiss() }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
         }
         .padding(24)
-        .frame(width: 380, height: 240)
+        .frame(width: 460, height: 480)
+    }
+
+    // MARK: - Pressure curves
+
+    private var pressureCurvesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Pressure curves")
+                .font(.subheadline.bold())
+            Text("Maps raw stylus pressure to output pressure. Per-app overrides win over the default.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text("Default")
+                    .frame(width: 80, alignment: .leading)
+                presetPicker(
+                    selection: viewModel.defaultCurve,
+                    onChange: { newCurve in
+                        viewModel.curveRegistry.setDefault(newCurve)
+                        viewModel.defaultCurve = newCurve
+                    }
+                )
+            }
+
+            // Per-app overrides
+            if let frontBundle = viewModel.frontmostApp.currentBundleId {
+                HStack {
+                    Text(frontBundle)
+                        .font(.caption.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(width: 200, alignment: .leading)
+                    presetPicker(
+                        selection: viewModel.curveRegistry.curve(for: frontBundle),
+                        onChange: { newCurve in
+                            viewModel.curveRegistry.setOverride(newCurve, for: frontBundle)
+                            overrideRefreshTick &+= 1
+                        }
+                    )
+                    Button {
+                        viewModel.curveRegistry.removeOverride(for: frontBundle)
+                        overrideRefreshTick &+= 1
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove override (use default)")
+                }
+            } else {
+                Text("Bring an app to the foreground to add a per-app override.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Existing overrides list (excluding the frontmost row above to avoid duplicate).
+            let overrides = viewModel.curveRegistry.overrides
+                .filter { $0.key != viewModel.frontmostApp.currentBundleId }
+            if !overrides.isEmpty {
+                Text("Other overrides")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                ForEach(overrides.keys.sorted(), id: \.self) { bundle in
+                    HStack {
+                        Text(bundle)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(width: 200, alignment: .leading)
+                        Text(presetName(overrides[bundle] ?? .linear))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            viewModel.curveRegistry.removeOverride(for: bundle)
+                            overrideRefreshTick &+= 1
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        // The tick forces re-evaluation of the overrides snapshot above when
+        // the registry mutates (the registry is not @Published).
+        .id(overrideRefreshTick)
+    }
+
+    private func presetPicker(
+        selection: PressureCurve,
+        onChange: @escaping (PressureCurve) -> Void
+    ) -> some View {
+        Picker("", selection: Binding(
+            get: { presetName(selection) },
+            set: { name in
+                if let curve = presetByName(name) { onChange(curve) }
+            }
+        )) {
+            Text("Linear").tag("Linear")
+            Text("Soft").tag("Soft")
+            Text("Hard").tag("Hard")
+            // If the curve is not one of the presets, add a tag so the picker
+            // does not throw "no matching tag" warnings.
+            if presetName(selection) == "Custom" {
+                Text("Custom").tag("Custom")
+            }
+        }
+        .labelsHidden()
+        .frame(width: 120)
+    }
+
+    private func presetName(_ curve: PressureCurve) -> String {
+        switch curve {
+        case .linear: return "Linear"
+        case .soft:   return "Soft"
+        case .hard:   return "Hard"
+        default:      return "Custom"
+        }
+    }
+
+    private func presetByName(_ name: String) -> PressureCurve? {
+        switch name {
+        case "Linear": return .linear
+        case "Soft":   return .soft
+        case "Hard":   return .hard
+        default:       return nil
+        }
     }
 }
 

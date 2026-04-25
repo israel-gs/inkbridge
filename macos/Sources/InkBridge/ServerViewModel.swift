@@ -35,6 +35,14 @@ final class ServerViewModel: ObservableObject {
         }
     }
 
+    /// Currently-selected default pressure curve. Mirrors `curveRegistry.defaultCurve`.
+    /// Published so SwiftUI redraws the picker when the underlying registry changes.
+    @Published var defaultCurve: PressureCurve = .linear
+
+    /// Public accessor so the settings sheet can read/write per-app overrides.
+    let curveRegistry: CurveRegistry
+    let frontmostApp: FrontmostAppDetector
+
     private static let smoothingKey = "signalq.smoothing"
     private static let histogramKey = "signalq.histogram"
 
@@ -59,6 +67,18 @@ final class ServerViewModel: ObservableObject {
         self.injector = injector
         self.server = InkBridgeServer(injector: injector)
         self.isTrusted = injector.isTrusted
+
+        // Build pressure-curve registry + frontmost-app detector and wire the
+        // injector so every STYLUS_MOVE pressure value passes through the
+        // resolved curve before being posted as a tablet event.
+        let registry = CurveRegistry(store: UserDefaultsCurveStore())
+        let detector = FrontmostAppDetector()
+        self.curveRegistry = registry
+        self.frontmostApp = detector
+        self.defaultCurve = registry.defaultCurve
+        injector.pressureTransform = { [registry, detector] raw in
+            registry.curve(for: detector.currentBundleId).apply(raw)
+        }
 
         // Load persisted signal-quality preferences. UserDefaults returns false
         // for an unset Bool, so smoothing defaults to true via explicit fallback.
@@ -121,6 +141,8 @@ final class ServerViewModel: ObservableObject {
             tcpListener: NoOpListener(),
             displayRect: DisplayRect(width: 1920, height: 1080)
         )
+        self.curveRegistry = CurveRegistry(store: UserDefaultsCurveStore())
+        self.frontmostApp = FrontmostAppDetector(provider: { nil })
         self.isTrusted = isTrusted
         self.serverState = previewState
         self.tunnelMaintainer = UsbTunnelMaintainer(runner: Optional<ProcessAdbRunner>.none, port: 4545)

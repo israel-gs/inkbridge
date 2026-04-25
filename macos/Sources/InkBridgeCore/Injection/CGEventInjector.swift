@@ -26,6 +26,15 @@ public final class CGEventInjector: Injector {
     /// True if the process currently holds Accessibility trust.
     public private(set) var isTrusted: Bool
 
+    /// Optional pressure transform applied to the normalized `[0, 1]` pressure
+    /// of every STYLUS_MOVE frame just before posting. When nil, the raw
+    /// normalized pressure is posted unchanged (legacy behaviour).
+    ///
+    /// The closure runs on the inject hot path (MainActor) — it MUST be O(1)
+    /// and allocation-free. `PressureCurve.apply` satisfies both. Set this from
+    /// the ViewModel after curve registry + frontmost-app detector are wired.
+    public var pressureTransform: ((Float) -> Float)?
+
     private var stateMachine = StrokeStateMachine()
     private let stateLock = NSLock()
     private let eventSource: CGEventSource?
@@ -438,7 +447,12 @@ public final class CGEventInjector: Injector {
 
         if let fields = fields {
             // Pressure: u16 [0, 65535] → normalized double [0.0, 1.0].
-            let normalizedPressure = Double(fields.pressure) / 65535.0
+            let rawNormalizedPressure = Double(fields.pressure) / 65535.0
+            // Optional per-app curve transform — applied in Float precision
+            // to match the curve type, then promoted back to Double for CG.
+            let normalizedPressure: Double = pressureTransform.map { transform in
+                Double(transform(Float(rawNormalizedPressure)))
+            } ?? rawNormalizedPressure
             cgEvent.setDoubleValueField(.tabletEventPointPressure, value: normalizedPressure)
             // Some AppKit consumers also read the integer pressure field on the
             // mouse event itself. Scale to 0..255 (NSEvent pressure is typically
