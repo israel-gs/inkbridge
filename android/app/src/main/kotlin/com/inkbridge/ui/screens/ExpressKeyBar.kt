@@ -35,42 +35,39 @@ import com.inkbridge.domain.model.ExpressKeysEdge
 import com.inkbridge.protocol.KeyAction
 
 /**
- * Floating column of express-key buttons aligned to the chosen edge of the canvas.
- *
- * Stylus events with [PointerType.Stylus] pass through this overlay to the
- * underlying [CaptureSurface] — only finger taps register as keys (palm
- * rejection by design — no extra gating needed).
+ * Side column of express-key buttons. Sized to its content width so the parent
+ * (typically a Row) places it physically next to the canvas — taps on the bar
+ * never reach the canvas because the two zones do not overlap. Stylus tool-type
+ * events still fall through (PointerType.Stylus guard inside each button) so
+ * the S Pen drawing in the bar's strip is preserved if the parent allows it.
  *
  * Each [ExpressKey]:
  * - [ExpressKeyAction.Shortcut] → emits a single [KeyAction.TAP] on press.
  * - [ExpressKeyAction.ModifierHold] → emits [KeyAction.PRESS] on touch down,
- *   [KeyAction.RELEASE] on lift / cancel / out-of-bounds.
+ *   [KeyAction.RELEASE] on lift / cancel.
  */
 @Composable
 fun ExpressKeyBar(
     keys: List<ExpressKey>,
-    edge: ExpressKeysEdge,
+    @Suppress("UNUSED_PARAMETER") edge: ExpressKeysEdge,
     onKeyAction: (ExpressKeyAction, KeyAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier.fillMaxHeight(),
-        contentAlignment = when (edge) {
-            ExpressKeysEdge.LEFT  -> Alignment.CenterStart
-            ExpressKeysEdge.RIGHT -> Alignment.CenterEnd
-        },
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier
+            .fillMaxHeight()
+            .padding(horizontal = 12.dp, vertical = 16.dp),
     ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(horizontal = 16.dp),
-        ) {
-            keys.forEach { key ->
-                ExpressKeyButton(
-                    key = key,
-                    onAction = { wireAction -> onKeyAction(key.action, wireAction) },
-                )
-            }
+        // Push the column vertically toward the centre to feel tablet-natural.
+        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+        keys.forEach { key ->
+            ExpressKeyButton(
+                key = key,
+                onAction = { wireAction -> onKeyAction(key.action, wireAction) },
+            )
         }
+        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
     }
 }
 

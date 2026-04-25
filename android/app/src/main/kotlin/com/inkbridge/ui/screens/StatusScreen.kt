@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -158,26 +159,39 @@ fun StatusScreen(
             AutoReconnectBanner()
         }
 
-        Box(
+        // Canvas + express-key bar live side by side rather than overlayed so
+        // (a) a tap on the bar never reaches the underlying CaptureSurface and
+        // (b) the user keeps full reachability of every canvas pixel without
+        // having to navigate around an overlay column.
+        val barShouldShow = expressKeysEnabled && expressKeys.isNotEmpty()
+        androidx.compose.foundation.layout.Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .weight(1f),
         ) {
+            if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.LEFT) {
+                ExpressKeyBar(
+                    keys = expressKeys,
+                    edge = expressKeysEdge,
+                    onKeyAction = onExpressKeyAction,
+                )
+            }
             CaptureSurface(
                 connectionState = connectionState,
                 onMotionEvent = onMotionEvent,
                 onGestureEvent = onGestureEvent,
                 onTrackpadEvent = onTrackpadEvent,
                 clickFlashes = clickFlashes,
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
             )
-            if (expressKeysEnabled && expressKeys.isNotEmpty()) {
+            if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.RIGHT) {
                 ExpressKeyBar(
                     keys = expressKeys,
                     edge = expressKeysEdge,
                     onKeyAction = onExpressKeyAction,
-                    modifier = Modifier.matchParentSize(),
                 )
             }
         }
