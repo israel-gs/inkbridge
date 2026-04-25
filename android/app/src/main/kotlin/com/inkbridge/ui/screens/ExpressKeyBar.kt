@@ -118,9 +118,16 @@ private fun ExpressKeyButton(
                     }
 
                     // Wait for the finger to lift OR the gesture to be cancelled.
+                    // CRITICAL: consume EVERY pointer change for this gesture, not
+                    // just the first down. Without this, move/up events for the
+                    // bar finger leak through the Compose → AndroidView interop
+                    // bridge and end up in the CaptureSurface's pointerInteropFilter,
+                    // inflating the canvas's pointer count and breaking the
+                    // 2-finger-scroll routing while the bar finger is held.
                     var sawAllUp = false
                     while (!sawAllUp) {
                         val event = awaitPointerEvent()
+                        event.changes.forEach { it.consume() }
                         if (event.changes.all { !it.pressed }) {
                             sawAllUp = true
                         }
