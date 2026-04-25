@@ -6,10 +6,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,21 +57,31 @@ fun ExpressKeyBar(
     onKeyAction: (ExpressKeyAction, KeyAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier
-            .fillMaxHeight()
-            .padding(horizontal = 12.dp, vertical = 16.dp),
-    ) {
-        // Push the column vertically toward the centre to feel tablet-natural.
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        keys.forEach { key ->
-            ExpressKeyButton(
-                key = key,
-                onAction = { wireAction -> onKeyAction(key.action, wireAction) },
-            )
+    // Scroll vertically when 6 buttons + spacing exceed the available height
+    // (typical on phones in landscape). On tablets the content fits and the
+    // scroll is a no-op.
+    // Center the keys vertically when there is room to spare, scroll when
+    // the screen is too short. The trick: `heightIn(min = maxHeight)` makes
+    // the column grow to AT LEAST the available height, which lets
+    // `Arrangement.spacedBy(... , Alignment.CenterVertically)` center the
+    // group; if content exceeds available height, the column grows beyond
+    // it and `verticalScroll` kicks in.
+    BoxWithConstraints(modifier = modifier.fillMaxHeight()) {
+        val available = maxHeight
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .heightIn(min = available)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            keys.forEach { key ->
+                ExpressKeyButton(
+                    key = key,
+                    onAction = { wireAction -> onKeyAction(key.action, wireAction) },
+                )
+            }
         }
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
     }
 }
 
@@ -94,7 +108,7 @@ private fun ExpressKeyButton(
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(64.dp)
+            .size(52.dp)
             .scale(pressScale)
             .background(
                 color = if (pressed) pressedBg else idleBg,
@@ -143,7 +157,7 @@ private fun ExpressKeyButton(
             Text(
                 text = key.label,
                 color = if (pressed) cyan else Color.White.copy(alpha = 0.85f),
-                fontSize = 13.sp,
+                fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 fontFamily = FontFamily.SansSerif,
             )

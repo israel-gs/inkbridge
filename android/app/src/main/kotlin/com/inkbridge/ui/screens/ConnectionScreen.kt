@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -116,34 +119,47 @@ fun ConnectionScreen(
             modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                // Feature 1: push content above the gesture navigation bar.
+                // Push content below the system status bar (top) AND above
+                // the gesture-navigation bar (bottom). Without statusBars,
+                // the InkBridge wordmark would be clipped on phones.
+                .windowInsetsPadding(WindowInsets.statusBars)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        // ── Wordmark header ──
+        // ── Wordmark header (sticky at top, NOT scrollable) ──
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Ink",
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 text = "Bridge",
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary,
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
             text = "Stream your S Pen to a macOS host.",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(16.dp))
 
+        // Scrollable content section. On phones in landscape (or with the
+        // soft keyboard open) the form would otherwise overflow the visible
+        // area and the user could not reach the host-IP field. Bottom button
+        // + footer stay below this scrollable region as a sticky group.
+        Column(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+        ) {
         // ── Transport selector ──
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             SegmentedButton(
@@ -213,10 +229,9 @@ fun ConnectionScreen(
             Spacer(Modifier.height(12.dp))
         }
 
-        // ── Fill the middle space so the button sits close to the bottom. ──
-        Box(modifier = Modifier.weight(1f))
+        } // end of scrollable middle section
 
-        // ── Primary action ──
+        // ── Primary action (sticky bottom) ──
         ConnectButton(
             isConnected = isConnected,
             isConnecting = isConnecting,

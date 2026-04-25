@@ -8,6 +8,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -132,59 +134,57 @@ fun StatusScreen(
     val window = (view.context as? Activity)?.window
     val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
 
-    Column(
+    // Outer Row: sidebar (full height, edge column) + canvas column (top bar
+    // + banners + canvas, takes the remaining width). The top bar is now
+    // scoped to the canvas zone — on phones in landscape it does not steal
+    // vertical space from the express-key sidebar.
+    val barShouldShow = expressKeysEnabled && expressKeys.isNotEmpty()
+    val onToggleFs: () -> Unit = {
+        isFullscreen = !isFullscreen
+        if (isFullscreen) {
+            window?.let { w -> WindowCompat.setDecorFitsSystemWindows(w, false) }
+            insetsController?.hide(WindowInsetsCompat.Type.systemBars())
+            insetsController?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    androidx.compose.foundation.layout.Row(
         modifier =
             modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
     ) {
-        TopBar(
-            transportLabel = stats.transportLabel,
-            connectionState = connectionState,
-            onDisconnect = onDisconnect,
-            onOpenSettings = { showSettings = true },
-            isFullscreen = isFullscreen,
-            onToggleFullscreen = {
-                isFullscreen = !isFullscreen
-                if (isFullscreen) {
-                    window?.let { w ->
-                        WindowCompat.setDecorFitsSystemWindows(w, false)
-                    }
-                    insetsController?.hide(WindowInsetsCompat.Type.systemBars())
-                    insetsController?.systemBarsBehavior =
-                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                } else {
-                    insetsController?.show(WindowInsetsCompat.Type.systemBars())
-                }
-            },
-        )
-
-        if (connectionState is ConnectionState.Error) {
-            ErrorBanner(connectionState.reason)
+        if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.LEFT) {
+            ExpressKeyBar(
+                keys = expressKeys,
+                edge = expressKeysEdge,
+                onKeyAction = onExpressKeyAction,
+            )
         }
-
-        if (isAutoReconnecting) {
-            AutoReconnectBanner()
-        }
-
-        // Canvas + express-key bar live side by side rather than overlayed so
-        // (a) a tap on the bar never reaches the underlying CaptureSurface and
-        // (b) the user keeps full reachability of every canvas pixel without
-        // having to navigate around an overlay column.
-        val barShouldShow = expressKeysEnabled && expressKeys.isNotEmpty()
-        androidx.compose.foundation.layout.Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
         ) {
-            if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.LEFT) {
-                ExpressKeyBar(
-                    keys = expressKeys,
-                    edge = expressKeysEdge,
-                    onKeyAction = onExpressKeyAction,
-                )
+            TopBar(
+                transportLabel = stats.transportLabel,
+                connectionState = connectionState,
+                onDisconnect = onDisconnect,
+                onOpenSettings = { showSettings = true },
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = onToggleFs,
+            )
+
+            if (connectionState is ConnectionState.Error) {
+                ErrorBanner(connectionState.reason)
             }
+            if (isAutoReconnecting) {
+                AutoReconnectBanner()
+            }
+
             CaptureSurface(
                 connectionState = connectionState,
                 onMotionEvent = onMotionEvent,
@@ -193,15 +193,15 @@ fun StatusScreen(
                 clickFlashes = clickFlashes,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
+                    .fillMaxWidth(),
             )
-            if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.RIGHT) {
-                ExpressKeyBar(
-                    keys = expressKeys,
-                    edge = expressKeysEdge,
-                    onKeyAction = onExpressKeyAction,
-                )
-            }
+        }
+        if (barShouldShow && expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.RIGHT) {
+            ExpressKeyBar(
+                keys = expressKeys,
+                edge = expressKeysEdge,
+                onKeyAction = onExpressKeyAction,
+            )
         }
     }
 
@@ -255,7 +255,10 @@ private fun TopBar(
                 .fillMaxWidth()
                 // Feature 1: push content below the status bar (edge-to-edge).
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                // Tighter vertical padding so phones in landscape keep more
+                // canvas height. Touch targets stay at 48dp via the IconButton
+                // children — the row's intrinsic height is dominated by them.
+                .padding(horizontal = 12.dp, vertical = 2.dp),
     ) {
         // Compact wordmark.
         Row {
@@ -459,6 +462,7 @@ private fun SettingsSheet(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 32.dp),
     ) {
