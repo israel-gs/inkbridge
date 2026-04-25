@@ -41,7 +41,6 @@ class UdpStylusClient(
     private val host: String,
     private val port: Int = 4545,
 ) : StylusTransport {
-
     private val _isConnected = MutableStateFlow(false)
     override val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
@@ -76,42 +75,45 @@ class UdpStylusClient(
     /** Serialises [send] calls so [reuseBuffer] is never accessed concurrently. */
     private val sendMutex = Mutex()
 
-    override suspend fun connect(): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val addr = InetAddress.getByName(host)
-            val sock = DatagramSocket()
-            sock.connect(addr, port)
-            socket = sock
-            remoteAddress = addr
-            // Pre-allocate the reusable packet now that the address is known.
-            reusePacket = DatagramPacket(reuseBuffer, reuseBuffer.size, addr, port)
-            _isConnected.value = true
-        }
-    }
-
-    override suspend fun send(bytes: ByteArray): Result<Unit> = withContext(Dispatchers.IO) {
-        sendMutex.withLock {
+    override suspend fun connect(): Result<Unit> =
+        withContext(Dispatchers.IO) {
             runCatching {
-                val sock = socket ?: error("Not connected")
-                val packet = reusePacket
-                if (packet != null && bytes.size <= reuseBuffer.size) {
-                    // Fast path: copy into the backing buffer and update length — no allocation.
-                    bytes.copyInto(reuseBuffer)
-                    packet.setData(reuseBuffer, 0, bytes.size)
-                    sock.send(packet)
-                } else {
-                    // Slow path: frame larger than the pre-allocated buffer (should not happen
-                    // with the current protocol, but safe to handle).
-                    sock.send(DatagramPacket(bytes, bytes.size))
+                val addr = InetAddress.getByName(host)
+                val sock = DatagramSocket()
+                sock.connect(addr, port)
+                socket = sock
+                remoteAddress = addr
+                // Pre-allocate the reusable packet now that the address is known.
+                reusePacket = DatagramPacket(reuseBuffer, reuseBuffer.size, addr, port)
+                _isConnected.value = true
+            }
+        }
+
+    override suspend fun send(bytes: ByteArray): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            sendMutex.withLock {
+                runCatching {
+                    val sock = socket ?: error("Not connected")
+                    val packet = reusePacket
+                    if (packet != null && bytes.size <= reuseBuffer.size) {
+                        // Fast path: copy into the backing buffer and update length — no allocation.
+                        bytes.copyInto(reuseBuffer)
+                        packet.setData(reuseBuffer, 0, bytes.size)
+                        sock.send(packet)
+                    } else {
+                        // Slow path: frame larger than the pre-allocated buffer (should not happen
+                        // with the current protocol, but safe to handle).
+                        sock.send(DatagramPacket(bytes, bytes.size))
+                    }
                 }
             }
         }
-    }
 
-    override suspend fun close() = withContext(Dispatchers.IO) {
-        _isConnected.value = false
-        socket?.close()
-        socket = null
-        reusePacket = null
-    }
+    override suspend fun close() =
+        withContext(Dispatchers.IO) {
+            _isConnected.value = false
+            socket?.close()
+            socket = null
+            reusePacket = null
+        }
 }

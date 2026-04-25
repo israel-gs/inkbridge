@@ -21,7 +21,6 @@ import org.junit.jupiter.api.assertThrows
  * R5 (flags), R6 (MOVE payload), R7 (PROXIMITY payload), R8 (BUTTON payload), R9 (sequence).
  */
 class BinaryStylusCodecTest {
-
     // ─────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────
@@ -31,9 +30,12 @@ class BinaryStylusCodecTest {
      * Format: one line of uppercase space-separated hex pairs; lines starting with `#` are comments.
      */
     private fun loadVector(filename: String): ByteArray {
-        val stream = checkNotNull(
-            javaClass.classLoader?.getResourceAsStream("vectors/$filename"),
-        ) { "Test vector not found on classpath: vectors/$filename — run `./gradlew test` (copyProtocolVectors task must run first)" }
+        val stream =
+            checkNotNull(
+                javaClass.classLoader?.getResourceAsStream("vectors/$filename"),
+            ) {
+                "Test vector not found: vectors/$filename — run `./gradlew test` (copyProtocolVectors must run first)"
+            }
         return stream.bufferedReader().useLines { lines ->
             lines
                 .filterNot { it.trimStart().startsWith('#') }
@@ -396,11 +398,11 @@ class BinaryStylusCodecTest {
         // timestamp_ns at offsets 8–15.
         // 8_000_000_000 = 0x00000001_DCD65000 → LE bytes: 00 50 D6 DC 01 00 00 00
         val bytes = ByteArray(20) { 0x00 }
-        bytes[0] = 0x01  // version
-        bytes[1] = 0x02  // STYLUS_PROXIMITY
+        bytes[0] = 0x01 // version
+        bytes[1] = 0x02 // STYLUS_PROXIMITY
         // Write 8_000_000_000 LE at offset 8
-        bytes[8]  = 0x00
-        bytes[9]  = 0x50
+        bytes[8] = 0x00
+        bytes[9] = 0x50
         bytes[10] = 0xD6.toByte()
         bytes[11] = 0xDC.toByte()
         bytes[12] = 0x01
@@ -420,15 +422,125 @@ class BinaryStylusCodecTest {
     fun `decode STYLUS_BUTTON with buttons inconsistent with flags throws ProtocolException`() {
         // flags = 0x08 (BUTTON_PRIMARY) but buttons payload byte = 0x00 (inconsistent).
         val bytes = ByteArray(20) { 0x00 }
-        bytes[0] = 0x01  // version
-        bytes[1] = 0x03  // STYLUS_BUTTON
-        bytes[2] = 0x08  // flags: BUTTON_PRIMARY
+        bytes[0] = 0x01 // version
+        bytes[1] = 0x03 // STYLUS_BUTTON
+        bytes[2] = 0x08 // flags: BUTTON_PRIMARY
         // buttons at offset 16 = 0x00 → inconsistent with flags bits 3-4
         bytes[16] = 0x00
 
         assertThrows<ProtocolException> {
             codec.decode(bytes)
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // CURSOR_DELTA — roundtrip + vector (A7 / A13)
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent CursorDelta`() {
+        val event = StylusEvent.CursorDelta(deltaX = 5, deltaY = -3)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 7u, timestampNs = 999uL)
+        assertEquals(20, encoded.size, "CURSOR_DELTA frame must be 20 bytes")
+
+        val decoded = codec.decode(encoded)
+        val cursorDelta = assertInstanceOf(StylusEvent.CursorDelta::class.java, decoded.event)
+        assertEquals(5.toShort(), cursorDelta.deltaX)
+        assertEquals((-3).toShort(), cursorDelta.deltaY)
+        assertEquals(7u, decoded.header.sequence)
+    }
+
+    @Test
+    fun `encode CURSOR_DELTA produces byte-for-byte match with cursor-delta vector`() {
+        // Vector: version=1, event_type=0x06, flags=0x00, sequence=0, timestamp_ns=0
+        // delta_x=10 (i16 LE: 0A 00), delta_y=-5 (i16 LE: FB FF)
+        val expected = loadVector("cursor-delta.hex")
+        val event = StylusEvent.CursorDelta(deltaX = 10, deltaY = -5)
+        val actual = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        assertArrayEquals(
+            expected,
+            actual,
+            "Kotlin encoder must produce byte-for-byte match with cursor-delta.hex vector",
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Extreme values — A7 characterization tests
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `encode Move with x above 1 clamps to 1`() {
+        // x=1.5f → clamped to 1.0f on encode (per R6 coerceIn).
+        val event = StylusEvent.Move(x = 1.5f, y = 0.5f, pressure = 0u, tiltX = 0, tiltY = 0)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val move = assertInstanceOf(StylusEvent.Move::class.java, decoded.event)
+        assertEquals(1.0f, move.x, 1e-6f, "x=1.5f must be clamped to 1.0f before encoding (R6)")
+    }
+
+    @Test
+    fun `encode Move with x NaN propagates through clamp`() {
+        // Kotlin coerceIn with NaN: NaN.coerceIn(0f, 1f) → NaN (JVM behaviour).
+        val event = StylusEvent.Move(x = Float.NaN, y = 0.5f, pressure = 0u, tiltX = 0, tiltY = 0)
+        // Encoder must not throw.
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val move = assertInstanceOf(StylusEvent.Move::class.java, decoded.event)
+        // Lock the observed behaviour: NaN propagates through coerceIn on JVM.
+        assertTrue(move.x.isNaN(), "NaN x: JVM coerceIn propagates NaN → decoded x must be NaN")
+    }
+
+    @Test
+    fun `scroll deltaX Int16 MAX roundtrips`() {
+        val event = StylusEvent.Scroll(deltaX = Short.MAX_VALUE, deltaY = 0)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val scroll = assertInstanceOf(StylusEvent.Scroll::class.java, decoded.event)
+        assertEquals(Short.MAX_VALUE, scroll.deltaX, "Int16.MAX scroll deltaX must roundtrip")
+        assertEquals(0.toShort(), scroll.deltaY)
+    }
+
+    @Test
+    fun `scroll deltaX Int16 MIN roundtrips`() {
+        val event = StylusEvent.Scroll(deltaX = Short.MIN_VALUE, deltaY = 0)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val scroll = assertInstanceOf(StylusEvent.Scroll::class.java, decoded.event)
+        assertEquals(Short.MIN_VALUE, scroll.deltaX, "Int16.MIN scroll deltaX must roundtrip")
+    }
+
+    @Test
+    fun `zoom scaleDelta infinity encodes and decodes`() {
+        // Float.POSITIVE_INFINITY encodes as its IEEE 754 bit pattern.
+        // The encoder does not validate, so infinity should roundtrip.
+        val event = StylusEvent.Zoom(scaleDelta = Float.POSITIVE_INFINITY)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val zoom = assertInstanceOf(StylusEvent.Zoom::class.java, decoded.event)
+        assertTrue(
+            zoom.scaleDelta.isInfinite() && zoom.scaleDelta > 0,
+            "Float.POSITIVE_INFINITY scaleDelta must roundtrip as +infinity",
+        )
+    }
+
+    @Test
+    fun `cursorDelta both deltas at MAX roundtrip`() {
+        val event = StylusEvent.CursorDelta(deltaX = Short.MAX_VALUE, deltaY = Short.MAX_VALUE)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val cd = assertInstanceOf(StylusEvent.CursorDelta::class.java, decoded.event)
+        assertEquals(Short.MAX_VALUE, cd.deltaX)
+        assertEquals(Short.MAX_VALUE, cd.deltaY)
+    }
+
+    @Test
+    fun `cursorDelta both deltas at MIN roundtrip`() {
+        val event = StylusEvent.CursorDelta(deltaX = Short.MIN_VALUE, deltaY = Short.MIN_VALUE)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        val decoded = codec.decode(encoded)
+        val cd = assertInstanceOf(StylusEvent.CursorDelta::class.java, decoded.event)
+        assertEquals(Short.MIN_VALUE, cd.deltaX)
+        assertEquals(Short.MIN_VALUE, cd.deltaY)
     }
 
     // ─────────────────────────────────────────────────────────────

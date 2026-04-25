@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test
  * Replace with real codec / domain tests during Phase 1.
  */
 class SampleTest {
-
     @Test
     fun `runner is configured correctly`() {
         assertTrue(true)

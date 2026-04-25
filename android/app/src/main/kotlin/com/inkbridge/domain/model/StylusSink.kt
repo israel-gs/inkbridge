@@ -10,7 +10,6 @@ package com.inkbridge.domain.model
  * dispatcher without blocking the UI thread.
  */
 interface StylusSink {
-
     /**
      * Emits a stylus position/pressure/tilt sample.
      * Called for both touch and hover moves.
@@ -23,7 +22,10 @@ interface StylusSink {
      * @param entering true when the stylus enters proximity, false when it leaves.
      * @param timestampNs monotonic nanosecond timestamp.
      */
-    suspend fun emitProximity(entering: Boolean, timestampNs: Long)
+    suspend fun emitProximity(
+        entering: Boolean,
+        timestampNs: Long,
+    )
 
     /**
      * Emits a button state-change event.
@@ -48,7 +50,12 @@ interface StylusSink {
      *                    momentum simulation after the gesture ends.
      * @param timestampNs Monotonic nanosecond timestamp.
      */
-    suspend fun emitScroll(deltaX: Short, deltaY: Short, phaseFlags: UByte = 0x00u, timestampNs: Long)
+    suspend fun emitScroll(
+        deltaX: Short,
+        deltaY: Short,
+        phaseFlags: UByte = 0x00u,
+        timestampNs: Long,
+    )
 
     /**
      * Emits a two-finger pinch/zoom event.
@@ -56,7 +63,10 @@ interface StylusSink {
      * @param scaleDelta  Multiplicative zoom factor since last frame. 1.0 = no change.
      * @param timestampNs Monotonic nanosecond timestamp.
      */
-    suspend fun emitZoom(scaleDelta: Float, timestampNs: Long)
+    suspend fun emitZoom(
+        scaleDelta: Float,
+        timestampNs: Long,
+    )
 
     /**
      * Emits a single-finger trackpad-mode relative cursor movement.
@@ -65,5 +75,9 @@ interface StylusSink {
      * @param deltaY      Vertical cursor delta in pixels (negative = up).
      * @param timestampNs Monotonic nanosecond timestamp.
      */
-    suspend fun emitCursorDelta(deltaX: Short, deltaY: Short, timestampNs: Long)
+    suspend fun emitCursorDelta(
+        deltaX: Short,
+        deltaY: Short,
+        timestampNs: Long,
+    )
 }

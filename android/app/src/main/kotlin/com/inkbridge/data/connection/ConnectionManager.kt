@@ -38,7 +38,6 @@ class ConnectionManager(
     private val transportFactory: TransportFactory = DefaultTransportFactory,
     private val errorScope: CoroutineScope = CoroutineScope(Dispatchers.IO),
 ) {
-
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
@@ -53,13 +52,18 @@ class ConnectionManager(
      *
      * USB_TCP ignores [host] and always connects to 127.0.0.1 (transport.md R4).
      */
-    suspend fun connect(host: String, port: Int, kind: TransportKind) {
+    suspend fun connect(
+        host: String,
+        port: Int,
+        kind: TransportKind,
+    ) {
         _state.value = ConnectionState.Connecting
 
-        val effectiveHost = when (kind) {
-            TransportKind.USB_TCP -> "127.0.0.1"
-            TransportKind.WIFI_UDP -> host
-        }
+        val effectiveHost =
+            when (kind) {
+                TransportKind.USB_TCP -> "127.0.0.1"
+                TransportKind.WIFI_UDP -> host
+            }
 
         val transport = transportFactory.create(effectiveHost, port, kind)
         val result = transport.connect()
@@ -71,22 +75,25 @@ class ConnectionManager(
             // Error so the UI stops showing "Connected" after a cable unplug or server
             // crash. transport.md R4. Cancel any prior watcher from a previous connect.
             errorWatchJob?.cancel()
-            errorWatchJob = errorScope.launch {
-                transport.errors.collect { cause ->
-                    // Only transition if we are still in Connected state — avoid
-                    // overwriting an explicit user-initiated Disconnected.
-                    if (_state.value is ConnectionState.Connected) {
-                        _state.value = ConnectionState.Error(
-                            cause.message ?: "Connection lost",
-                        )
+            errorWatchJob =
+                errorScope.launch {
+                    transport.errors.collect { cause ->
+                        // Only transition if we are still in Connected state — avoid
+                        // overwriting an explicit user-initiated Disconnected.
+                        if (_state.value is ConnectionState.Connected) {
+                            _state.value =
+                                ConnectionState.Error(
+                                    cause.message ?: "Connection lost",
+                                )
+                        }
                     }
                 }
-            }
         } else {
             transport.close()
-            _state.value = ConnectionState.Error(
-                result.exceptionOrNull()?.message ?: "Connection failed",
-            )
+            _state.value =
+                ConnectionState.Error(
+                    result.exceptionOrNull()?.message ?: "Connection failed",
+                )
         }
     }
 
@@ -107,11 +114,19 @@ class ConnectionManager(
     // ─────────────────────────────────────────────────────────────────────────
 
     fun interface TransportFactory {
-        fun create(host: String, port: Int, kind: TransportKind): StylusTransport
+        fun create(
+            host: String,
+            port: Int,
+            kind: TransportKind,
+        ): StylusTransport
     }
 
     object DefaultTransportFactory : TransportFactory {
-        override fun create(host: String, port: Int, kind: TransportKind): StylusTransport =
+        override fun create(
+            host: String,
+            port: Int,
+            kind: TransportKind,
+        ): StylusTransport =
             when (kind) {
                 TransportKind.WIFI_UDP -> UdpStylusClient(host, port)
                 TransportKind.USB_TCP -> TcpStylusClient(host, port)

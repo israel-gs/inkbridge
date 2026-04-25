@@ -23,7 +23,6 @@ import kotlin.math.tan
  * This class has no Android imports and is fully testable on a plain JVM.
  */
 object MotionEventMapper {
-
     // RISK NOTE: The apply brief specifies tiltY = -cos(orientation)*tan(altitude)*100.
     // android-capture.md R4 specifies tiltY = cos(orientation)*tan(altitude)*100 (positive).
     // Specs are authoritative under SDD — using the spec formula (positive cos).
@@ -46,46 +45,49 @@ object MotionEventMapper {
             return emptyList()
         }
 
-        val hover = when (event.action) {
-            MotionEventLike.ACTION_HOVER_ENTER,
-            MotionEventLike.ACTION_HOVER_MOVE,
-            MotionEventLike.ACTION_HOVER_EXIT,
-            -> true
-            else -> false
-        }
+        val hover =
+            when (event.action) {
+                MotionEventLike.ACTION_HOVER_ENTER,
+                MotionEventLike.ACTION_HOVER_MOVE,
+                MotionEventLike.ACTION_HOVER_EXIT,
+                -> true
+                else -> false
+            }
 
         val samples = mutableListOf<StylusSample>()
 
         // Emit historical samples first (R7 — ascending order, index 0 is oldest).
         val historySize = event.getHistorySize()
         for (i in 0 until historySize) {
-            samples += buildSample(
-                rawX = event.getHistoricalX(i),
-                rawY = event.getHistoricalY(i),
-                rawPressure = event.getHistoricalAxisValue(MotionEventLike.AXIS_PRESSURE, i),
-                rawTilt = event.getHistoricalAxisValue(MotionEventLike.AXIS_TILT, i),
-                rawOrientation = event.getHistoricalAxisValue(MotionEventLike.AXIS_ORIENTATION, i),
+            samples +=
+                buildSample(
+                    rawX = event.getHistoricalX(i),
+                    rawY = event.getHistoricalY(i),
+                    rawPressure = event.getHistoricalAxisValue(MotionEventLike.AXIS_PRESSURE, i),
+                    rawTilt = event.getHistoricalAxisValue(MotionEventLike.AXIS_TILT, i),
+                    rawOrientation = event.getHistoricalAxisValue(MotionEventLike.AXIS_ORIENTATION, i),
+                    buttonState = event.getButtonState(),
+                    hover = hover,
+                    viewWidth = event.viewWidth,
+                    viewHeight = event.viewHeight,
+                    timestampNs = event.getHistoricalEventTime(i) * 1_000_000L,
+                )
+        }
+
+        // Emit the current sample last.
+        samples +=
+            buildSample(
+                rawX = event.getX(),
+                rawY = event.getY(),
+                rawPressure = event.getAxisValue(MotionEventLike.AXIS_PRESSURE),
+                rawTilt = event.getAxisValue(MotionEventLike.AXIS_TILT),
+                rawOrientation = event.getAxisValue(MotionEventLike.AXIS_ORIENTATION),
                 buttonState = event.getButtonState(),
                 hover = hover,
                 viewWidth = event.viewWidth,
                 viewHeight = event.viewHeight,
-                timestampNs = event.getHistoricalEventTime(i) * 1_000_000L,
+                timestampNs = event.eventTime * 1_000_000L,
             )
-        }
-
-        // Emit the current sample last.
-        samples += buildSample(
-            rawX = event.getX(),
-            rawY = event.getY(),
-            rawPressure = event.getAxisValue(MotionEventLike.AXIS_PRESSURE),
-            rawTilt = event.getAxisValue(MotionEventLike.AXIS_TILT),
-            rawOrientation = event.getAxisValue(MotionEventLike.AXIS_ORIENTATION),
-            buttonState = event.getButtonState(),
-            hover = hover,
-            viewWidth = event.viewWidth,
-            viewHeight = event.viewHeight,
-            timestampNs = event.eventTime * 1_000_000L,
-        )
 
         return samples
     }
@@ -126,10 +128,12 @@ object MotionEventMapper {
         } else {
             val altitude = (PI / 2.0) - rawTilt.toDouble()
             val tanAlt = tan(altitude)
-            tiltX = (sin(rawOrientation.toDouble()) * tanAlt * 100.0).roundToInt()
-                .coerceIn(-9000, 9000)
-            tiltY = (cos(rawOrientation.toDouble()) * tanAlt * 100.0).roundToInt()
-                .coerceIn(-9000, 9000)
+            tiltX =
+                (sin(rawOrientation.toDouble()) * tanAlt * 100.0).roundToInt()
+                    .coerceIn(-9000, 9000)
+            tiltY =
+                (cos(rawOrientation.toDouble()) * tanAlt * 100.0).roundToInt()
+                    .coerceIn(-9000, 9000)
         }
 
         return StylusSample(

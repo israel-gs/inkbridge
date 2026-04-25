@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test
  * runs on the JVM with no Android instrumentation.
  */
 class SettingsRepositoryTest {
-
     private lateinit var prefs: FakeSharedPreferences
     private lateinit var repo: SettingsRepository
 

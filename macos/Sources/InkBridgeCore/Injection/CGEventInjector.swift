@@ -61,6 +61,10 @@ public final class CGEventInjector: Injector {
     /// silently dropped on macOS 14+ for unentitled apps even with Hardened
     /// Runtime + Apple Development cert, so the default is `false` (use the
     /// Cmd+scroll fallback which works universally).
+    ///
+    /// TODO: Remove this flag and the associated branch once the kCGEventTypeGesture
+    /// path is confirmed permanently broken on all supported macOS versions (14+).
+    /// The Cmd+scroll fallback is the correct production path.
     public var preferGestureEvent: Bool = false
 
     /// Tracks the in-flight momentum simulation task so a fresh gesture can cancel it.

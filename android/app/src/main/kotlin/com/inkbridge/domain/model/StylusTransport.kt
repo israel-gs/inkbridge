@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
  * catching exceptions across coroutine boundaries.
  */
 interface StylusTransport {
-
     /** True while the socket is open and usable for [send]. */
     val isConnected: StateFlow<Boolean>
 

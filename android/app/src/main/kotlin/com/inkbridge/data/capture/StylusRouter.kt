@@ -13,14 +13,15 @@ import com.inkbridge.domain.model.StylusSample
  * a leftMouseDown — cursor moves, no stroke.
  */
 object StylusRouter {
-
     sealed class Action {
         data class Sample(val sample: StylusSample) : Action()
+
         data class Button(
             val primaryPressed: Boolean,
             val secondaryPressed: Boolean,
             val timestampNs: Long,
         ) : Action()
+
         data class Proximity(val entering: Boolean, val timestampNs: Long) : Action()
     }
 
@@ -63,20 +64,23 @@ object StylusRouter {
                 // position + pressure/tilt BEFORE synthesising leftMouseDown.
                 // Otherwise the down event fires with no pressure and drawing
                 // apps paint a large "max pressure" blob at the stroke start.
-                samples.map(Action::Sample) + Action.Button(
-                    primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs,
-                )
+                samples.map(Action::Sample) +
+                    Action.Button(
+                        primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs,
+                    )
 
             Actions.ACTION_UP ->
-                samples.map(Action::Sample) + Action.Button(
-                    primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs,
-                )
+                samples.map(Action::Sample) +
+                    Action.Button(
+                        primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs,
+                    )
 
             Actions.ACTION_CANCEL ->
                 // Treat CANCEL like UP — release the button so drawing apps close the stroke.
-                samples.map(Action::Sample) + Action.Button(
-                    primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs,
-                )
+                samples.map(Action::Sample) +
+                    Action.Button(
+                        primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs,
+                    )
 
             Actions.ACTION_MOVE, Actions.ACTION_HOVER_MOVE ->
                 samples.map(Action::Sample)

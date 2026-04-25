@@ -29,6 +29,7 @@ object Flags {
     const val HOVER: UByte = 0x04u
     const val BUTTON_PRIMARY: UByte = 0x08u
     const val BUTTON_SECONDARY: UByte = 0x10u
+
     /** Scroll/gesture phase markers — used in STYLUS_SCROLL frames. */
     const val SCROLL_BEGIN: UByte = 0x40u
     const val SCROLL_END: UByte = 0x80u
@@ -51,7 +52,6 @@ object EventType {
  * Each subtype carries the payload fields defined in wire-protocol.md R6–R8.
  */
 sealed class StylusEvent {
-
     /**
      * STYLUS_MOVE (event_type = 0x01) — stylus tip touching or hovering with position data.
      * Payload: 20 bytes. Total frame: 36 bytes.

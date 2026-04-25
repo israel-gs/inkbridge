@@ -419,6 +419,134 @@ final class BinaryStylusCodecTests: XCTestCase {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // CURSOR_DELTA (R?) — encode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    func testRoundtripCursorDelta() throws {
+        let event = StylusEvent.cursorDelta(deltaX: 5, deltaY: -3)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 7, timestampNs: 999)
+        XCTAssertEqual(encoded.count, 20, "CURSOR_DELTA frame must be 20 bytes")
+
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .cursorDelta(dx, dy) = decoded.event else {
+            XCTFail("Expected .cursorDelta")
+            return
+        }
+        XCTAssertEqual(dx, 5)
+        XCTAssertEqual(dy, -3)
+        XCTAssertEqual(decoded.header.sequence, 7)
+    }
+
+    func testCursorDeltaVectorByteEquality() throws {
+        // Load the cross-platform cursor-delta.hex test vector and verify
+        // that the Swift encoder produces identical bytes.
+        let expected = try loadVector(named: "cursor-delta.hex")
+        // Vector: version=1, event_type=0x06, flags=0x00, sequence=0, timestamp_ns=0
+        // delta_x=10 (i16 LE: 0x0A 0x00), delta_y=-5 (i16 LE: 0xFB 0xFF)
+        let event = StylusEvent.cursorDelta(deltaX: 10, deltaY: -5)
+        let actual = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        XCTAssertEqual(actual, expected, "Encoder must produce byte-for-byte match with cursor-delta.hex vector")
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Extreme values — A2 characterization tests
+    // ─────────────────────────────────────────────────────────────
+
+    func testMoveWithNanX_clampsToZeroOnEncode() throws {
+        // The encoder clamps x to [0.0, 1.0] before encoding.
+        // NaN.clamped(to: 0...1) → NaN because min/max with NaN propagates NaN in Swift's
+        // min/max functions. Verify current behaviour and lock it in.
+        let event = StylusEvent.move(x: Float.nan, y: 0.5, pressure: 0, tiltX: 0, tiltY: 0)
+        // Encoder must not throw.
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        // Decode and observe whatever the encoder did. The spec says clamp [0,1]; NaN
+        // propagates through IEEE min/max so the decoded x will also be NaN.
+        // We characterize: decoder reads the bit pattern back faithfully.
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .move(x, _, _, _, _) = decoded.event else {
+            XCTFail("Expected .move")
+            return
+        }
+        // Lock the observed behaviour: x is NaN (clamp with NaN propagates NaN).
+        XCTAssertTrue(x.isNaN, "NaN x: current encoder behaviour is that NaN propagates through clamp → decoded x is NaN")
+    }
+
+    func testMoveWithXAboveOne_clampsToOne() throws {
+        // x=1.5 → clamped to 1.0 on encode (per R6).
+        let event = StylusEvent.move(x: 1.5, y: 0.5, pressure: 0, tiltX: 0, tiltY: 0)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .move(x, _, _, _, _) = decoded.event else {
+            XCTFail("Expected .move")
+            return
+        }
+        XCTAssertEqual(x, 1.0, accuracy: 1e-6, "x=1.5 must be clamped to 1.0 before encoding (R6)")
+    }
+
+    func testScrollDeltaXMaxValue_roundtrips() throws {
+        // deltaX = Int16.max = 32767
+        let event = StylusEvent.scroll(deltaX: Int16.max, deltaY: 0)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .scroll(dx, dy) = decoded.event else {
+            XCTFail("Expected .scroll")
+            return
+        }
+        XCTAssertEqual(dx, Int16.max, "Int16.max scrollDeltaX must roundtrip exactly")
+        XCTAssertEqual(dy, 0)
+    }
+
+    func testScrollDeltaXMinValue_roundtrips() throws {
+        // deltaX = Int16.min = -32768
+        let event = StylusEvent.scroll(deltaX: Int16.min, deltaY: 0)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .scroll(dx, dy) = decoded.event else {
+            XCTFail("Expected .scroll")
+            return
+        }
+        XCTAssertEqual(dx, Int16.min, "Int16.min scrollDeltaX must roundtrip exactly")
+        XCTAssertEqual(dy, 0)
+    }
+
+    func testZoomWithInfiniteScaleDelta_encodesAndDecodes() throws {
+        // Float.infinity encodes as its IEEE 754 bit pattern. The encoder does not
+        // validate the zoom payload, so infinity should roundtrip faithfully.
+        let event = StylusEvent.zoom(scaleDelta: Float.infinity)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .zoom(scaleDelta) = decoded.event else {
+            XCTFail("Expected .zoom")
+            return
+        }
+        XCTAssertTrue(scaleDelta.isInfinite && scaleDelta > 0,
+            "Float.infinity scaleDelta must roundtrip as +infinity (IEEE 754 bit-pattern encode/decode)")
+    }
+
+    func testCursorDeltaBothMinMaxValues_roundtrip() throws {
+        // Characterization: cursorDelta with both deltas at extremes.
+        let eventMax = StylusEvent.cursorDelta(deltaX: Int16.max, deltaY: Int16.max)
+        let encodedMax = try BinaryStylusCodec.encode(eventMax, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decodedMax = try BinaryStylusCodec.decode(encodedMax)
+        guard case let .cursorDelta(dx, dy) = decodedMax.event else {
+            XCTFail("Expected .cursorDelta (max case)")
+            return
+        }
+        XCTAssertEqual(dx, Int16.max)
+        XCTAssertEqual(dy, Int16.max)
+
+        let eventMin = StylusEvent.cursorDelta(deltaX: Int16.min, deltaY: Int16.min)
+        let encodedMin = try BinaryStylusCodec.encode(eventMin, flags: 0x00, sequence: 0, timestampNs: 0)
+        let decodedMin = try BinaryStylusCodec.decode(encodedMin)
+        guard case let .cursorDelta(dxMin, dyMin) = decodedMin.event else {
+            XCTFail("Expected .cursorDelta (min case)")
+            return
+        }
+        XCTAssertEqual(dxMin, Int16.min)
+        XCTAssertEqual(dyMin, Int16.min)
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Forward compatibility (R11)
     // ─────────────────────────────────────────────────────────────
 

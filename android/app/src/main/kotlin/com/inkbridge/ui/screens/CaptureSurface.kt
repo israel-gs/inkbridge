@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
@@ -79,69 +78,70 @@ fun CaptureSurface(
     var showFeedback by remember { mutableStateOf(false) }
 
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 12.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(CanvasBackground)
-            .border(
-                width = 1.dp,
-                color = InkOutline.copy(alpha = borderAlpha),
-                shape = RoundedCornerShape(16.dp),
-            )
-            .onSizeChanged { size ->
-                viewWidth = size.width.coerceAtLeast(1)
-                viewHeight = size.height.coerceAtLeast(1)
-            }
-            .pointerInteropFilter { event ->
-                if (!isActive) return@pointerInteropFilter false
-
-                // Count pointers by category. STYLUS + ERASER → stylus side.
-                // Everything else (FINGER, UNKNOWN, MOUSE) → finger side.
-                var stylusCount = 0
-                for (i in 0 until event.pointerCount) {
-                    val t = event.getToolType(i)
-                    if (t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER) {
-                        stylusCount++
-                    }
+        modifier =
+            modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 12.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(CanvasBackground)
+                .border(
+                    width = 1.dp,
+                    color = InkOutline.copy(alpha = borderAlpha),
+                    shape = RoundedCornerShape(16.dp),
+                )
+                .onSizeChanged { size ->
+                    viewWidth = size.width.coerceAtLeast(1)
+                    viewHeight = size.height.coerceAtLeast(1)
                 }
-                val fingerCount = event.pointerCount - stylusCount
+                .pointerInteropFilter { event ->
+                    if (!isActive) return@pointerInteropFilter false
 
-                // Routing:
-                // - 1 stylus alone → existing stylus path (preserves S Pen fidelity).
-                // - 2 fingers alone → gesture path.
-                // - 1 finger alone → CLAIM (return true) but don't dispatch. This keeps the
-                //   input stream alive so the upcoming 2nd-finger ACTION_POINTER_DOWN actually
-                //   reaches us. If we returned false here, Android would route subsequent
-                //   pointer events elsewhere and the gesture would never start.
-                // - Anything else (mixed, 3+ fingers) → ignore (return false).
-                when {
-                    stylusCount == 1 && fingerCount == 0 -> {
-                        onMotionEvent(event, viewWidth, viewHeight)
-                        when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                                feedbackOffset = Offset(event.getX(0), event.getY(0))
-                                feedbackPressure = event.pressure.coerceIn(0f, 1f)
-                                showFeedback = true
-                            }
-                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                showFeedback = false
-                            }
+                    // Count pointers by category. STYLUS + ERASER → stylus side.
+                    // Everything else (FINGER, UNKNOWN, MOUSE) → finger side.
+                    var stylusCount = 0
+                    for (i in 0 until event.pointerCount) {
+                        val t = event.getToolType(i)
+                        if (t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER) {
+                            stylusCount++
                         }
                     }
-                    fingerCount == 2 && stylusCount == 0 -> {
-                        onGestureEvent(event, viewWidth, viewHeight)
-                        showFeedback = false
+                    val fingerCount = event.pointerCount - stylusCount
+
+                    // Routing:
+                    // - 1 stylus alone → existing stylus path (preserves S Pen fidelity).
+                    // - 2 fingers alone → gesture path.
+                    // - 1 finger alone → CLAIM (return true) but don't dispatch. This keeps the
+                    //   input stream alive so the upcoming 2nd-finger ACTION_POINTER_DOWN actually
+                    //   reaches us. If we returned false here, Android would route subsequent
+                    //   pointer events elsewhere and the gesture would never start.
+                    // - Anything else (mixed, 3+ fingers) → ignore (return false).
+                    when {
+                        stylusCount == 1 && fingerCount == 0 -> {
+                            onMotionEvent(event, viewWidth, viewHeight)
+                            when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                                    feedbackOffset = Offset(event.getX(0), event.getY(0))
+                                    feedbackPressure = event.pressure.coerceIn(0f, 1f)
+                                    showFeedback = true
+                                }
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                    showFeedback = false
+                                }
+                            }
+                        }
+                        fingerCount == 2 && stylusCount == 0 -> {
+                            onGestureEvent(event, viewWidth, viewHeight)
+                            showFeedback = false
+                        }
+                        fingerCount == 1 && stylusCount == 0 -> {
+                            // Trackpad mode: drag → cursor delta, quick tap → primary click.
+                            onTrackpadEvent(event, viewWidth, viewHeight)
+                            showFeedback = false
+                        }
+                        else -> return@pointerInteropFilter false
                     }
-                    fingerCount == 1 && stylusCount == 0 -> {
-                        // Trackpad mode: drag → cursor delta, quick tap → primary click.
-                        onTrackpadEvent(event, viewWidth, viewHeight)
-                        showFeedback = false
-                    }
-                    else -> return@pointerInteropFilter false
-                }
-                true
-            },
+                    true
+                },
     ) {
         // Dot grid — drawn once per layout, scales with view size.
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -187,21 +187,26 @@ private fun DrawScope.drawDotGrid(isActive: Boolean) {
  * Radial glow under the stylus tip. Larger + more intense with pressure.
  * Not a stroke — purely UX confirmation that input is captured.
  */
-private fun DrawScope.drawFeedbackGlow(offset: Offset, pressure: Float) {
+private fun DrawScope.drawFeedbackGlow(
+    offset: Offset,
+    pressure: Float,
+) {
     val baseRadius = 16.dp.toPx()
     val pressureRadius = baseRadius + pressure * 24.dp.toPx()
     val intensity = (0.15f + pressure * 0.55f).coerceIn(0.15f, 0.7f)
 
     // Soft outer halo.
     drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(
-                CanvasFeedbackGlow.copy(alpha = intensity),
-                CanvasFeedbackGlow.copy(alpha = 0f),
+        brush =
+            Brush.radialGradient(
+                colors =
+                    listOf(
+                        CanvasFeedbackGlow.copy(alpha = intensity),
+                        CanvasFeedbackGlow.copy(alpha = 0f),
+                    ),
+                center = offset,
+                radius = pressureRadius * 2f,
             ),
-            center = offset,
-            radius = pressureRadius * 2f,
-        ),
         radius = pressureRadius * 2f,
         center = offset,
     )

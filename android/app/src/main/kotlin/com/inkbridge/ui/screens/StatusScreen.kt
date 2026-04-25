@@ -45,6 +45,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -86,9 +88,10 @@ fun StatusScreen(
     val scope = rememberCoroutineScope()
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
     ) {
         TopBar(
             transportLabel = stats.transportLabel,
@@ -106,9 +109,10 @@ fun StatusScreen(
             onMotionEvent = onMotionEvent,
             onGestureEvent = onGestureEvent,
             onTrackpadEvent = onTrackpadEvent,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
         )
     }
 
@@ -141,9 +145,10 @@ private fun TopBar(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         // Compact wordmark.
         Row {
@@ -170,7 +175,7 @@ private fun TopBar(
 
         IconButton(
             onClick = onOpenSettings,
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(
                 imageVector = Icons.Outlined.Settings,
@@ -181,7 +186,7 @@ private fun TopBar(
 
         IconButton(
             onClick = onDisconnect,
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(
                 imageVector = Icons.Default.Close,
@@ -197,23 +202,33 @@ private fun TransportChip(
     label: String,
     connectionState: ConnectionState,
 ) {
-    val icon: ImageVector? = when {
-        label.equals("Wi-Fi", ignoreCase = true) -> Icons.Outlined.Wifi
-        label.equals("USB", ignoreCase = true) -> Icons.Outlined.Usb
-        else -> null
-    }
+    val icon: ImageVector? =
+        when {
+            label.equals("Wi-Fi", ignoreCase = true) -> Icons.Outlined.Wifi
+            label.equals("USB", ignoreCase = true) -> Icons.Outlined.Usb
+            else -> null
+        }
 
-    val dotColor: Color = when (connectionState) {
-        is ConnectionState.Connected -> MaterialTheme.colorScheme.secondary
-        is ConnectionState.Error -> MaterialTheme.colorScheme.error
-        is ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
-        is ConnectionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val dotColor: Color =
+        when (connectionState) {
+            is ConnectionState.Connected -> MaterialTheme.colorScheme.secondary
+            is ConnectionState.Error -> MaterialTheme.colorScheme.error
+            is ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
+            is ConnectionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
     val pulse = connectionState is ConnectionState.Connected
+    val statusText =
+        when (connectionState) {
+            is ConnectionState.Connected -> "Connected via $label"
+            is ConnectionState.Connecting -> "Connecting via $label"
+            is ConnectionState.Error -> "Connection error"
+            is ConnectionState.Disconnected -> "Disconnected"
+        }
 
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Server status: $statusText" },
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -239,24 +254,29 @@ private fun TransportChip(
 }
 
 @Composable
-private fun PulsingDot(color: Color, pulse: Boolean) {
+private fun PulsingDot(
+    color: Color,
+    pulse: Boolean,
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "statusPulse")
     val haloAlpha by infiniteTransition.animateFloat(
         initialValue = 0.0f,
         targetValue = if (pulse) 0.45f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec =
+            infiniteRepeatable(
+                animation = tween(durationMillis = 1200),
+                repeatMode = RepeatMode.Reverse,
+            ),
         label = "pulseAlpha",
     )
     val haloScale by infiniteTransition.animateFloat(
         initialValue = 1.0f,
         targetValue = if (pulse) 2.0f else 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec =
+            infiniteRepeatable(
+                animation = tween(durationMillis = 1200),
+                repeatMode = RepeatMode.Reverse,
+            ),
         label = "pulseScale",
     )
 
@@ -266,17 +286,19 @@ private fun PulsingDot(color: Color, pulse: Boolean) {
     ) {
         if (pulse) {
             Box(
-                modifier = Modifier
-                    .size((7 * haloScale).dp)
-                    .clip(CircleShape)
-                    .background(color.copy(alpha = haloAlpha)),
+                modifier =
+                    Modifier
+                        .size((7 * haloScale).dp)
+                        .clip(CircleShape)
+                        .background(color.copy(alpha = haloAlpha)),
             )
         }
         Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(color),
+            modifier =
+                Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color),
         )
     }
 }
@@ -295,10 +317,11 @@ private fun SettingsSheet(
     onNaturalScrollChange: (Boolean) -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(bottom = 32.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
     ) {
         Text(
             text = "Gesture Settings",
@@ -311,9 +334,10 @@ private fun SettingsSheet(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -343,9 +367,10 @@ private fun ErrorBanner(reason: String) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
         Text(
             text = reason,
@@ -358,7 +383,13 @@ private fun ErrorBanner(reason: String) {
 
 // ── Previews ──────────────────────────────────────────────────────────────────
 
-@Preview(name = "Status — Connected Wi-Fi", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 780)
+@Preview(
+    name = "Status — Connected Wi-Fi",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 780,
+)
 @Composable
 private fun PreviewStatusConnectedWifi() {
     InkBridgeTheme {
@@ -371,7 +402,13 @@ private fun PreviewStatusConnectedWifi() {
     }
 }
 
-@Preview(name = "Status — Connected USB", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 780)
+@Preview(
+    name = "Status — Connected USB",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 780,
+)
 @Composable
 private fun PreviewStatusConnectedUsb() {
     InkBridgeTheme {

@@ -104,14 +104,16 @@ fun ConnectionScreen(
 
     val portError = validatePort(portText)
     val hostError = if (selectedTab == TAB_WIFI) validateHost(host) else null
-    val canConnect = controlsEnabled && portError == null && hostError == null &&
-        (selectedTab == TAB_USB || host.isNotBlank())
+    val canConnect =
+        controlsEnabled && portError == null && hostError == null &&
+            (selectedTab == TAB_USB || host.isNotBlank())
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 20.dp, vertical = 24.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 20.dp, vertical = 24.dp),
     ) {
         // ── Wordmark header ──
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -161,12 +163,13 @@ fun ConnectionScreen(
 
         // ── Tab content ──
         when (selectedTab) {
-            TAB_WIFI -> WifiTabContent(
-                host = host,
-                onHostChange = { host = it },
-                hostError = hostError,
-                enabled = controlsEnabled,
-            )
+            TAB_WIFI ->
+                WifiTabContent(
+                    host = host,
+                    onHostChange = { host = it },
+                    hostError = hostError,
+                    enabled = controlsEnabled,
+                )
             TAB_USB -> UsbTabContent()
         }
 
@@ -262,14 +265,16 @@ private fun WifiTabContent(
         supportingText = hostError?.let { { Text(it) } },
         enabled = enabled,
         singleLine = true,
-        keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Number,
-            imeAction = ImeAction.Done,
-        ),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = MaterialTheme.colorScheme.secondary,
-            cursorColor = MaterialTheme.colorScheme.secondary,
-        ),
+        keyboardOptions =
+            KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Done,
+            ),
+        colors =
+            OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                cursorColor = MaterialTheme.colorScheme.secondary,
+            ),
         modifier = Modifier.fillMaxWidth(),
     )
 }
@@ -301,11 +306,12 @@ private fun UsbTabContent() {
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Text(
                     text = command,
@@ -320,12 +326,21 @@ private fun UsbTabContent() {
                         clipboard.setPrimaryClip(ClipData.newPlainText("adb reverse", command))
                         copied = true
                     },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    contentPadding =
+                        androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 8.dp,
+                            vertical = 4.dp,
+                        ),
                 ) {
                     Icon(
                         imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
                         contentDescription = if (copied) "Copied" else "Copy command",
-                        tint = if (copied) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint =
+                            if (copied) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.size(4.dp))
@@ -333,7 +348,12 @@ private fun UsbTabContent() {
                         text = if (copied) "Copied" else "Copy",
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 12.sp,
-                        color = if (copied) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color =
+                            if (copied) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                     )
                 }
             }
@@ -392,14 +412,16 @@ private fun AdvancedSection(
                     supportingText = portError?.let { { Text(it) } },
                     enabled = enabled,
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Done,
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.secondary,
-                        cursorColor = MaterialTheme.colorScheme.secondary,
-                    ),
+                    keyboardOptions =
+                        KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done,
+                        ),
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                            cursorColor = MaterialTheme.colorScheme.secondary,
+                        ),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -422,10 +444,11 @@ private fun ErrorBanner(reason: String) {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.error),
+                modifier =
+                    Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error),
             )
             Text(
                 text = reason,
@@ -450,9 +473,10 @@ private fun ConnectButton(
         isConnected -> {
             OutlinedButton(
                 onClick = onDisconnect,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
             ) {
                 Text("Disconnect")
             }
@@ -460,9 +484,10 @@ private fun ConnectButton(
         isConnecting -> {
             OutlinedButton(
                 onClick = onDisconnect,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
             ) {
                 Text("Cancel")
             }
@@ -471,15 +496,17 @@ private fun ConnectButton(
             Button(
                 onClick = onConnect,
                 enabled = canConnect,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary,
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
             ) {
                 Text(
                     text = "Connect",
@@ -515,7 +542,13 @@ private fun validateHost(host: String): String? {
 
 // ── Previews ──────────────────────────────────────────────────────────────────
 
-@Preview(name = "Connection — Wi-Fi", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 780)
+@Preview(
+    name = "Connection — Wi-Fi",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 780,
+)
 @Composable
 private fun PreviewConnectionWifi() {
     InkBridgeTheme {
@@ -527,7 +560,13 @@ private fun PreviewConnectionWifi() {
     }
 }
 
-@Preview(name = "Connection — Error", showBackground = true, backgroundColor = 0xFF0A0A0A, widthDp = 360, heightDp = 780)
+@Preview(
+    name = "Connection — Error",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 780,
+)
 @Composable
 private fun PreviewConnectionError() {
     InkBridgeTheme {

@@ -1,6 +1,5 @@
 package com.inkbridge.domain.usecase
 
-import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusSample
 import com.inkbridge.domain.model.StylusSink
 import com.inkbridge.domain.model.StylusTransport
@@ -33,7 +32,6 @@ import java.util.concurrent.atomic.AtomicInteger
 class StreamStylus(
     transport: StylusTransport?,
 ) : StylusSink {
-
     /**
      * The active transport. [Volatile] so that a transport swap in [swapTransport]
      * is immediately visible to any coroutine calling [sendOrDrop].
@@ -65,34 +63,40 @@ class StreamStylus(
         if (tiltPresent) flags = flags or Flags.TILT_PRESENT.toUInt()
         if (sample.hover) flags = flags or Flags.HOVER.toUInt()
 
-        val event = StylusEvent.Move(
-            x = sample.x,
-            y = sample.y,
-            pressure = sample.pressure.toUShort(),
-            tiltX = sample.tiltX.toShort(),
-            tiltY = sample.tiltY.toShort(),
-        )
+        val event =
+            StylusEvent.Move(
+                x = sample.x,
+                y = sample.y,
+                pressure = sample.pressure.toUShort(),
+                tiltX = sample.tiltX.toShort(),
+                tiltY = sample.tiltY.toShort(),
+            )
 
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = flags.toUByte(),
-            sequence = seq,
-            timestampNs = sample.timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = flags.toUByte(),
+                sequence = seq,
+                timestampNs = sample.timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 
-    override suspend fun emitProximity(entering: Boolean, timestampNs: Long) {
+    override suspend fun emitProximity(
+        entering: Boolean,
+        timestampNs: Long,
+    ) {
         val flags: UByte = if (entering) Flags.HOVER else 0x00u
         val event = StylusEvent.Proximity(entering = entering)
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = flags,
-            sequence = seq,
-            timestampNs = timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = flags,
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 
@@ -110,48 +114,64 @@ class StreamStylus(
         val event = StylusEvent.Button(buttons = buttonsByte)
 
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = flags.toUByte(),
-            sequence = seq,
-            timestampNs = timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = flags.toUByte(),
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 
-    override suspend fun emitScroll(deltaX: Short, deltaY: Short, phaseFlags: UByte, timestampNs: Long) {
+    override suspend fun emitScroll(
+        deltaX: Short,
+        deltaY: Short,
+        phaseFlags: UByte,
+        timestampNs: Long,
+    ) {
         val event = StylusEvent.Scroll(deltaX = deltaX, deltaY = deltaY)
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = phaseFlags,
-            sequence = seq,
-            timestampNs = timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = phaseFlags,
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 
-    override suspend fun emitZoom(scaleDelta: Float, timestampNs: Long) {
+    override suspend fun emitZoom(
+        scaleDelta: Float,
+        timestampNs: Long,
+    ) {
         val event = StylusEvent.Zoom(scaleDelta = scaleDelta)
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = 0x00u,
-            sequence = seq,
-            timestampNs = timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = 0x00u,
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 
-    override suspend fun emitCursorDelta(deltaX: Short, deltaY: Short, timestampNs: Long) {
+    override suspend fun emitCursorDelta(
+        deltaX: Short,
+        deltaY: Short,
+        timestampNs: Long,
+    ) {
         val event = StylusEvent.CursorDelta(deltaX = deltaX, deltaY = deltaY)
         val seq = nextSequence()
-        val bytes = BinaryStylusCodec.encode(
-            event = event,
-            flags = 0x00u,
-            sequence = seq,
-            timestampNs = timestampNs.toULong(),
-        )
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = 0x00u,
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
         sendOrDrop(bytes)
     }
 

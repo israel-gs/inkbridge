@@ -43,7 +43,6 @@ class TwoFingerGestureDetector(
     private val tapMovementThresholdPx: Float = 12f,
     private val tapTimeoutMs: Long = 150L,
 ) {
-
     // ── Internal state ────────────────────────────────────────────────────────
 
     private var prevCentroid: Offset? = null
@@ -102,11 +101,12 @@ class TwoFingerGestureDetector(
         spread: Float,
         eventTimeMs: Long,
     ): List<GestureEvent> {
-        val prev = prevCentroid ?: run {
-            prevCentroid = centroid
-            prevSpread = spread
-            return emptyList()
-        }
+        val prev =
+            prevCentroid ?: run {
+                prevCentroid = centroid
+                prevSpread = spread
+                return emptyList()
+            }
 
         val dx = centroid.x - prev.x
         val dy = centroid.y - prev.y

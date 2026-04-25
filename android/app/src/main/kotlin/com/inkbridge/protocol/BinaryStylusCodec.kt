@@ -21,7 +21,6 @@ import java.nio.ByteOrder
  *   STYLUS_ZOOM      (0x05) → 4 bytes payload  → 20 bytes total (R13)
  */
 object BinaryStylusCodec {
-
     private const val PROTOCOL_VERSION: Byte = 0x01
     private const val HEADER_SIZE = 16
     private const val MOVE_PAYLOAD_SIZE = 20
@@ -99,51 +98,69 @@ object BinaryStylusCodec {
         sequence: UInt,
         timestampNs: ULong,
     ) {
-        buf.put(PROTOCOL_VERSION)           // offset 0: version
-        buf.put(eventTypeByte)              // offset 1: event_type
-        buf.put(flags.toByte())             // offset 2: flags
-        buf.put(0x00)                       // offset 3: _reserved (MUST be 0x00)
-        buf.putInt(sequence.toInt())        // offset 4–7: sequence u32 LE
-        buf.putLong(timestampNs.toLong())   // offset 8–15: timestamp_ns u64 LE
+        buf.put(PROTOCOL_VERSION) // offset 0: version
+        buf.put(eventTypeByte) // offset 1: event_type
+        buf.put(flags.toByte()) // offset 2: flags
+        buf.put(0x00) // offset 3: _reserved (MUST be 0x00)
+        buf.putInt(sequence.toInt()) // offset 4–7: sequence u32 LE
+        buf.putLong(timestampNs.toLong()) // offset 8–15: timestamp_ns u64 LE
     }
 
-    private fun writeMovePayload(buf: ByteBuffer, event: StylusEvent.Move) {
+    private fun writeMovePayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Move,
+    ) {
         // Clamp x and y to [0.0, 1.0] per R6.
-        buf.putFloat(event.x.coerceIn(0f, 1f))      // offset 16–19: x f32 LE
-        buf.putFloat(event.y.coerceIn(0f, 1f))      // offset 20–23: y f32 LE
-        buf.putShort(event.pressure.toShort())       // offset 24–25: pressure u16 LE
-        buf.putShort(event.tiltX)                    // offset 26–27: tilt_x i16 LE
-        buf.putShort(event.tiltY)                    // offset 28–29: tilt_y i16 LE
-        buf.putShort(0)                              // offset 30–31: _pad = 0x0000
-        buf.putInt(0)                                // offset 32–35: _reserved = 0x00000000
+        buf.putFloat(event.x.coerceIn(0f, 1f)) // offset 16–19: x f32 LE
+        buf.putFloat(event.y.coerceIn(0f, 1f)) // offset 20–23: y f32 LE
+        buf.putShort(event.pressure.toShort()) // offset 24–25: pressure u16 LE
+        buf.putShort(event.tiltX) // offset 26–27: tilt_x i16 LE
+        buf.putShort(event.tiltY) // offset 28–29: tilt_y i16 LE
+        buf.putShort(0) // offset 30–31: _pad = 0x0000
+        buf.putInt(0) // offset 32–35: _reserved = 0x00000000
     }
 
-    private fun writeProximityPayload(buf: ByteBuffer, event: StylusEvent.Proximity) {
+    private fun writeProximityPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Proximity,
+    ) {
         buf.put(if (event.entering) 0x01 else 0x00) // offset 16: entering
-        buf.put(0x00)                               // offset 17: _pad[0]
-        buf.put(0x00)                               // offset 18: _pad[1]
-        buf.put(0x00)                               // offset 19: _pad[2]
+        buf.put(0x00) // offset 17: _pad[0]
+        buf.put(0x00) // offset 18: _pad[1]
+        buf.put(0x00) // offset 19: _pad[2]
     }
 
-    private fun writeButtonPayload(buf: ByteBuffer, event: StylusEvent.Button) {
-        buf.put(event.buttons.toByte())             // offset 16: buttons
-        buf.put(0x00)                               // offset 17: _pad[0]
-        buf.put(0x00)                               // offset 18: _pad[1]
-        buf.put(0x00)                               // offset 19: _pad[2]
+    private fun writeButtonPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Button,
+    ) {
+        buf.put(event.buttons.toByte()) // offset 16: buttons
+        buf.put(0x00) // offset 17: _pad[0]
+        buf.put(0x00) // offset 18: _pad[1]
+        buf.put(0x00) // offset 19: _pad[2]
     }
 
-    private fun writeScrollPayload(buf: ByteBuffer, event: StylusEvent.Scroll) {
-        buf.putShort(event.deltaX)                  // offset 16–17: delta_x i16 LE
-        buf.putShort(event.deltaY)                  // offset 18–19: delta_y i16 LE
+    private fun writeScrollPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Scroll,
+    ) {
+        buf.putShort(event.deltaX) // offset 16–17: delta_x i16 LE
+        buf.putShort(event.deltaY) // offset 18–19: delta_y i16 LE
     }
 
-    private fun writeZoomPayload(buf: ByteBuffer, event: StylusEvent.Zoom) {
-        buf.putFloat(event.scaleDelta)              // offset 16–19: scale_delta f32 LE
+    private fun writeZoomPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Zoom,
+    ) {
+        buf.putFloat(event.scaleDelta) // offset 16–19: scale_delta f32 LE
     }
 
-    private fun writeCursorDeltaPayload(buf: ByteBuffer, event: StylusEvent.CursorDelta) {
-        buf.putShort(event.deltaX)                  // offset 16–17: delta_x i16 LE
-        buf.putShort(event.deltaY)                  // offset 18–19: delta_y i16 LE
+    private fun writeCursorDeltaPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.CursorDelta,
+    ) {
+        buf.putShort(event.deltaX) // offset 16–17: delta_x i16 LE
+        buf.putShort(event.deltaY) // offset 18–19: delta_y i16 LE
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -182,31 +199,36 @@ object BinaryStylusCodec {
         val sequence = buf.getInt().toUInt()
         val timestampNs = buf.getLong().toULong()
 
-        val header = PacketHeader(
-            version = version,
-            eventType = eventType,
-            flags = flags,
-            reserved = reserved,
-            sequence = sequence,
-            timestampNs = timestampNs,
-        )
-
-        val event = when (eventType) {
-            EventType.STYLUS_MOVE -> decodeMovePayload(bytes, buf)
-            EventType.STYLUS_PROXIMITY -> decodeProximityPayload(bytes, buf)
-            EventType.STYLUS_BUTTON -> decodeButtonPayload(bytes, buf, flags)
-            EventType.STYLUS_SCROLL -> decodeScrollPayload(bytes, buf)
-            EventType.STYLUS_ZOOM -> decodeZoomPayload(bytes, buf)
-            EventType.CURSOR_DELTA -> decodeCursorDeltaPayload(bytes, buf)
-            else -> throw ProtocolException(
-                "Unknown event_type: 0x${eventType.toString(16).uppercase()}",
+        val header =
+            PacketHeader(
+                version = version,
+                eventType = eventType,
+                flags = flags,
+                reserved = reserved,
+                sequence = sequence,
+                timestampNs = timestampNs,
             )
-        }
+
+        val event =
+            when (eventType) {
+                EventType.STYLUS_MOVE -> decodeMovePayload(bytes, buf)
+                EventType.STYLUS_PROXIMITY -> decodeProximityPayload(bytes, buf)
+                EventType.STYLUS_BUTTON -> decodeButtonPayload(bytes, buf, flags)
+                EventType.STYLUS_SCROLL -> decodeScrollPayload(bytes, buf)
+                EventType.STYLUS_ZOOM -> decodeZoomPayload(bytes, buf)
+                EventType.CURSOR_DELTA -> decodeCursorDeltaPayload(bytes, buf)
+                else -> throw ProtocolException(
+                    "Unknown event_type: 0x${eventType.toString(16).uppercase()}",
+                )
+            }
 
         return DecodedFrame(header = header, event = event)
     }
 
-    private fun decodeMovePayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Move {
+    private fun decodeMovePayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.Move {
         val required = HEADER_SIZE + MOVE_PAYLOAD_SIZE
         if (bytes.size < required) {
             throw ProtocolException(
@@ -223,7 +245,10 @@ object BinaryStylusCodec {
         return StylusEvent.Move(x = x, y = y, pressure = pressure, tiltX = tiltX, tiltY = tiltY)
     }
 
-    private fun decodeProximityPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Proximity {
+    private fun decodeProximityPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.Proximity {
         val required = HEADER_SIZE + PROX_BUTTON_PAYLOAD_SIZE
         if (bytes.size < required) {
             throw ProtocolException(
@@ -260,30 +285,39 @@ object BinaryStylusCodec {
         return StylusEvent.Button(buttons = buttonsByte)
     }
 
-    private fun decodeScrollPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Scroll {
+    private fun decodeScrollPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.Scroll {
         val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
         if (bytes.size < required) {
             throw ProtocolException(
                 "STYLUS_SCROLL frame too short: expected at least $required bytes, got ${bytes.size}",
             )
         }
-        val deltaX = buf.getShort()   // offset 16–17: delta_x i16 LE
-        val deltaY = buf.getShort()   // offset 18–19: delta_y i16 LE
+        val deltaX = buf.getShort() // offset 16–17: delta_x i16 LE
+        val deltaY = buf.getShort() // offset 18–19: delta_y i16 LE
         return StylusEvent.Scroll(deltaX = deltaX, deltaY = deltaY)
     }
 
-    private fun decodeZoomPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Zoom {
+    private fun decodeZoomPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.Zoom {
         val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
         if (bytes.size < required) {
             throw ProtocolException(
                 "STYLUS_ZOOM frame too short: expected at least $required bytes, got ${bytes.size}",
             )
         }
-        val scaleDelta = buf.getFloat()   // offset 16–19: scale_delta f32 LE
+        val scaleDelta = buf.getFloat() // offset 16–19: scale_delta f32 LE
         return StylusEvent.Zoom(scaleDelta = scaleDelta)
     }
 
-    private fun decodeCursorDeltaPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.CursorDelta {
+    private fun decodeCursorDeltaPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.CursorDelta {
         val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
         if (bytes.size < required) {
             throw ProtocolException(

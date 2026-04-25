@@ -24,7 +24,6 @@ import java.util.concurrent.Executors
  * directly — this mirrors the exact operations performed in [onCleared].
  */
 class ConnectionViewModelLifecycleTest {
-
     // ── Fakes ─────────────────────────────────────────────────────────────────
 
     private class TrackingTransport : StylusTransport {
@@ -32,11 +31,14 @@ class ConnectionViewModelLifecycleTest {
         override val isConnected: StateFlow<Boolean> = _isConnected
         override val errors: SharedFlow<Throwable> = MutableSharedFlow()
         var closeCalled = false
+
         override suspend fun connect() = Result.success(Unit)
+
         override suspend fun close() {
             closeCalled = true
             _isConnected.value = false
         }
+
         override suspend fun send(bytes: ByteArray) = Result.success(Unit)
     }
 
@@ -64,20 +66,21 @@ class ConnectionViewModelLifecycleTest {
      * transition state to Disconnected and call close() on any active transport.
      */
     @Test
-    fun `connectionManager is disconnected after onCleared`() = runBlocking {
-        val transport = TrackingTransport()
-        val factory = ConnectionManager.TransportFactory { _, _, _ -> transport }
-        val manager = ConnectionManager(factory)
+    fun `connectionManager is disconnected after onCleared`() =
+        runBlocking {
+            val transport = TrackingTransport()
+            val factory = ConnectionManager.TransportFactory { _, _, _ -> transport }
+            val manager = ConnectionManager(factory)
 
-        manager.connect("127.0.0.1", 4545, TransportKind.USB_TCP)
-        assertTrue(manager.state.value is ConnectionState.Connected)
+            manager.connect("127.0.0.1", 4545, TransportKind.USB_TCP)
+            assertTrue(manager.state.value is ConnectionState.Connected)
 
-        // Simulate the disconnect() call from onCleared.
-        manager.disconnect()
+            // Simulate the disconnect() call from onCleared.
+            manager.disconnect()
 
-        assertFalse(transport.isConnected.value, "transport must be closed after onCleared disconnect")
-        assertTrue(manager.state.value is ConnectionState.Disconnected)
-    }
+            assertFalse(transport.isConnected.value, "transport must be closed after onCleared disconnect")
+            assertTrue(manager.state.value is ConnectionState.Disconnected)
+        }
 
     /**
      * The emitChannel consumer coroutine exits cleanly when the channel is closed:
@@ -86,18 +89,20 @@ class ConnectionViewModelLifecycleTest {
      * consuming via tryReceive (non-suspending) in a normal test.
      */
     @Test
-    fun `consumer drains all pending items before exiting when channel is closed`() = runBlocking {
-        val consumed = mutableListOf<Int>()
-        val channel = Channel<Int>(Channel.UNLIMITED)
+    fun `consumer drains all pending items before exiting when channel is closed`() =
+        runBlocking {
+            val consumed = mutableListOf<Int>()
+            val channel = Channel<Int>(Channel.UNLIMITED)
 
-        repeat(10) { channel.trySend(it) }
-        channel.close()
+            repeat(10) { channel.trySend(it) }
+            channel.close()
 
-        // Drain: this mirrors what the `for (job in channel)` loop does.
-        for (item in channel) { consumed.add(item) }
+            // Drain: this mirrors what the `for (job in channel)` loop does.
+            for (item in channel) {
+                consumed.add(item)
+            }
 
-        assertTrue(consumed.size == 10, "All 10 items must be consumed before the loop exits")
-        assertTrue(consumed == (0..9).toList(), "Items must be consumed in FIFO order")
-    }
+            assertTrue(consumed.size == 10, "All 10 items must be consumed before the loop exits")
+            assertTrue(consumed == (0..9).toList(), "Items must be consumed in FIFO order")
+        }
 }
-

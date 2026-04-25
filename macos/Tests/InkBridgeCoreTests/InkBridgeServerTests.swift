@@ -295,6 +295,84 @@ final class InkBridgeServerTests: XCTestCase {
         XCTAssertEqual(injector.calls[1].1.y, 810, accuracy: 1)
     }
 
+    // MARK: - A5: Scroll phase routing
+
+    /// SCROLL frame with flags=0x40 (SCROLL_BEGIN) → injector.scrollCalls last entry has phaseFlags=0x40.
+    func testScrollFrameWithBeginFlagPassesPhaseFlags0x40() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let data = try BinaryStylusCodec.encode(
+            .scroll(deltaX: 5, deltaY: 10),
+            flags: 0x40,   // SCROLL_BEGIN
+            sequence: 0,
+            timestampNs: 0
+        )
+        let frame = try BinaryStylusCodec.decode(data)
+        udpListener.emit(frame)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(injector.scrollCalls.count, 1)
+        XCTAssertEqual(injector.scrollCalls[0].2, 0x40, "phaseFlags must be 0x40 for SCROLL_BEGIN")
+    }
+
+    /// SCROLL frame with flags=0x80 (SCROLL_END) → injector.scrollCalls last entry has phaseFlags=0x80.
+    func testScrollFrameWithEndFlagPassesPhaseFlags0x80() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let data = try BinaryStylusCodec.encode(
+            .scroll(deltaX: 0, deltaY: 5),
+            flags: 0x80,   // SCROLL_END
+            sequence: 0,
+            timestampNs: 0
+        )
+        let frame = try BinaryStylusCodec.decode(data)
+        udpListener.emit(frame)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(injector.scrollCalls.count, 1)
+        XCTAssertEqual(injector.scrollCalls[0].2, 0x80, "phaseFlags must be 0x80 for SCROLL_END")
+    }
+
+    /// CURSOR_DELTA frame → injector.cursorDeltaCalls increments.
+    func testCursorDeltaFrameCallsInjectCursorDelta() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let data = try BinaryStylusCodec.encode(
+            .cursorDelta(deltaX: 3, deltaY: -2),
+            flags: 0x00,
+            sequence: 0,
+            timestampNs: 0
+        )
+        let frame = try BinaryStylusCodec.decode(data)
+        udpListener.emit(frame)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(injector.cursorDeltaCalls.count, 1, "cursorDelta must reach injector.cursorDeltaCalls")
+        XCTAssertEqual(injector.cursorDeltaCalls[0].0, 3)
+        XCTAssertEqual(injector.cursorDeltaCalls[0].1, -2)
+        // inject() must NOT be called for cursorDelta.
+        XCTAssertEqual(injector.calls.count, 0, "cursorDelta must not go through inject()")
+    }
+
+    /// InjectorError.notTrusted on a MOVE frame → state transitions to .degraded.
+    func testNotTrustedErrorTransitionsToDegraded() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        injector.nextError = .notTrusted
+        udpListener.emit(try makeMoveFrame(x: 0.5, y: 0.5))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        if case .degraded = server.state {
+            // Pass — correct transition.
+        } else {
+            XCTFail("Expected .degraded after InjectorError.notTrusted, got \(server.state)")
+        }
+    }
+
     func testInjectionFailureDoesNotChangeState() async throws {
         server.start(port: 4545)
         try await Task.sleep(nanoseconds: 50_000_000)

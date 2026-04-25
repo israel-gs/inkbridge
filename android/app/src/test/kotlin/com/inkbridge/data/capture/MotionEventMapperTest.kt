@@ -4,10 +4,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.tan
 
 /**
  * Unit tests for [MotionEventMapper].
@@ -16,7 +12,6 @@ import kotlin.math.tan
  * Covers android-capture.md R1–R7 scenarios.
  */
 class MotionEventMapperTest {
-
     // ── Fake ─────────────────────────────────────────────────────────────────
 
     /**
@@ -43,24 +38,38 @@ class MotionEventMapperTest {
         private val historicalEventTime: List<Long> = emptyList(),
     ) : MotionEventLike {
         override fun getToolType(): Int = toolType
+
         override fun getX(): Float = x
+
         override fun getY(): Float = y
-        override fun getAxisValue(axis: Int): Float = when (axis) {
-            MotionEventLike.AXIS_PRESSURE -> pressure
-            MotionEventLike.AXIS_TILT -> tilt
-            MotionEventLike.AXIS_ORIENTATION -> orientation
-            else -> 0f
-        }
+
+        override fun getAxisValue(axis: Int): Float =
+            when (axis) {
+                MotionEventLike.AXIS_PRESSURE -> pressure
+                MotionEventLike.AXIS_TILT -> tilt
+                MotionEventLike.AXIS_ORIENTATION -> orientation
+                else -> 0f
+            }
+
         override fun getButtonState(): Int = buttonState
+
         override fun getHistorySize(): Int = historicalX.size
+
         override fun getHistoricalX(pos: Int): Float = historicalX[pos]
+
         override fun getHistoricalY(pos: Int): Float = historicalY[pos]
-        override fun getHistoricalAxisValue(axis: Int, pos: Int): Float = when (axis) {
-            MotionEventLike.AXIS_PRESSURE -> historicalPressure.getOrElse(pos) { 0f }
-            MotionEventLike.AXIS_TILT -> historicalTilt.getOrElse(pos) { 0f }
-            MotionEventLike.AXIS_ORIENTATION -> historicalOrientation.getOrElse(pos) { 0f }
-            else -> 0f
-        }
+
+        override fun getHistoricalAxisValue(
+            axis: Int,
+            pos: Int,
+        ): Float =
+            when (axis) {
+                MotionEventLike.AXIS_PRESSURE -> historicalPressure.getOrElse(pos) { 0f }
+                MotionEventLike.AXIS_TILT -> historicalTilt.getOrElse(pos) { 0f }
+                MotionEventLike.AXIS_ORIENTATION -> historicalOrientation.getOrElse(pos) { 0f }
+                else -> 0f
+            }
+
         override fun getHistoricalEventTime(pos: Int): Long = historicalEventTime.getOrElse(pos) { 0L }
     }
 
@@ -237,15 +246,17 @@ class MotionEventMapperTest {
     @Test
     fun `event with 3 historical samples produces 4 ordered samples`() {
         // 3 historical + 1 current = 4 total
-        val ev = FakeMotionEvent(
-            x = 840f, y = 1800f,
-            historicalX = listOf(100f, 200f, 300f),
-            historicalY = listOf(200f, 400f, 600f),
-            historicalPressure = listOf(0.1f, 0.2f, 0.3f),
-            historicalTilt = listOf(0f, 0f, 0f),
-            historicalOrientation = listOf(0f, 0f, 0f),
-            historicalEventTime = listOf(100L, 200L, 300L),
-        )
+        val ev =
+            FakeMotionEvent(
+                x = 840f,
+                y = 1800f,
+                historicalX = listOf(100f, 200f, 300f),
+                historicalY = listOf(200f, 400f, 600f),
+                historicalPressure = listOf(0.1f, 0.2f, 0.3f),
+                historicalTilt = listOf(0f, 0f, 0f),
+                historicalOrientation = listOf(0f, 0f, 0f),
+                historicalEventTime = listOf(100L, 200L, 300L),
+            )
         val samples = MotionEventMapper.map(ev)
         assertEquals(4, samples.size, "Must produce 4 samples (3 historical + 1 current)")
 
@@ -260,12 +271,13 @@ class MotionEventMapperTest {
 
     @Test
     fun `historical sample timestamps are converted from ms to ns`() {
-        val ev = FakeMotionEvent(
-            historicalX = listOf(100f),
-            historicalY = listOf(100f),
-            historicalEventTime = listOf(500L),
-            eventTime = 1000L,
-        )
+        val ev =
+            FakeMotionEvent(
+                historicalX = listOf(100f),
+                historicalY = listOf(100f),
+                historicalEventTime = listOf(500L),
+                eventTime = 1000L,
+            )
         val samples = MotionEventMapper.map(ev)
         assertEquals(2, samples.size)
         assertEquals(500L * 1_000_000L, samples[0].timestampNs)
@@ -276,5 +288,35 @@ class MotionEventMapperTest {
     fun `event without history produces exactly one sample`() {
         val ev = FakeMotionEvent()
         assertEquals(1, MotionEventMapper.map(ev).size)
+    }
+
+    // A9 — ACTION_CANCEL
+
+    @Test
+    fun `ACTION_CANCEL produces one sample with hover=false`() {
+        // ACTION_CANCEL = 3; MotionEventMapper treats it like ACTION_MOVE —
+        // produces samples, hover flag is false (not a hover action).
+        val ev = FakeMotionEvent(action = MotionEventLike.ACTION_CANCEL)
+        val samples = MotionEventMapper.map(ev)
+        // MotionEventMapper.map() checks toolType first; a stylus CANCEL must produce a sample.
+        assertEquals(1, samples.size, "ACTION_CANCEL with stylus must produce one sample")
+        assertEquals(false, samples[0].hover, "ACTION_CANCEL is not a hover event")
+    }
+
+    @Test
+    fun `DOWN then CANCEL sequence both produce samples`() {
+        // Sequence: DOWN → CANCEL (no MOVE between).
+        // Both events independently produce samples.
+        val down = FakeMotionEvent(action = MotionEventLike.ACTION_DOWN, x = 540f, y = 1200f)
+        val cancel = FakeMotionEvent(action = MotionEventLike.ACTION_CANCEL, x = 542f, y = 1202f)
+
+        val downSamples = MotionEventMapper.map(down)
+        val cancelSamples = MotionEventMapper.map(cancel)
+
+        assertEquals(1, downSamples.size, "DOWN must produce one sample")
+        assertEquals(1, cancelSamples.size, "CANCEL must produce one sample")
+        // Both samples have hover=false.
+        assertEquals(false, downSamples[0].hover)
+        assertEquals(false, cancelSamples[0].hover)
     }
 }

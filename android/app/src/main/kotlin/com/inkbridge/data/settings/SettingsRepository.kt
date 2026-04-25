@@ -12,7 +12,6 @@ import android.content.SharedPreferences
  * Key: [KEY_NATURAL_SCROLL] — default true (matches macOS default behaviour).
  */
 class SettingsRepository(private val prefs: SharedPreferences) {
-
     companion object {
         const val KEY_NATURAL_SCROLL = "pref_natural_scroll"
     }

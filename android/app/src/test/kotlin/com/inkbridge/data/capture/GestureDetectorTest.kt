@@ -12,15 +12,15 @@ import org.junit.jupiter.api.Test
  * All tests use pure-Kotlin [Offset] — no Android runtime required.
  */
 class GestureDetectorTest {
-
     private lateinit var detector: TwoFingerGestureDetector
 
     @BeforeEach
     fun setUp() {
-        detector = TwoFingerGestureDetector(
-            tapMovementThresholdPx = 12f,
-            tapTimeoutMs = 150L,
-        )
+        detector =
+            TwoFingerGestureDetector(
+                tapMovementThresholdPx = 12f,
+                tapTimeoutMs = 150L,
+            )
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -38,11 +38,12 @@ class GestureDetectorTest {
         )
 
         // Move centroid down 30px; spread unchanged.
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(100f, 130f),
-            spread = 200f,
-            eventTimeMs = 50L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(100f, 130f),
+                spread = 200f,
+                eventTimeMs = 50L,
+            )
 
         assertEquals(1, events.size)
         val scroll = assertInstanceOf(GestureEvent.Scroll::class.java, events[0])
@@ -61,11 +62,12 @@ class GestureDetectorTest {
         )
 
         // Move only 1px — below the 1.5px threshold.
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(100f, 101f),
-            spread = 200f,
-            eventTimeMs = 10L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(100f, 101f),
+                spread = 200f,
+                eventTimeMs = 10L,
+            )
 
         assertTrue(events.isEmpty())
     }
@@ -85,11 +87,12 @@ class GestureDetectorTest {
         )
 
         // Spread increases to 240 (20% zoom in); centroid unchanged.
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(500f, 500f),
-            spread = 240f,
-            eventTimeMs = 50L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(500f, 500f),
+                spread = 240f,
+                eventTimeMs = 50L,
+            )
 
         assertEquals(1, events.size)
         val zoom = assertInstanceOf(GestureEvent.Zoom::class.java, events[0])
@@ -107,11 +110,12 @@ class GestureDetectorTest {
         )
 
         // Spread changes by 0.5% — below 0.5% threshold.
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(500f, 500f),
-            spread = 201f,
-            eventTimeMs = 10L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(500f, 500f),
+                spread = 201f,
+                eventTimeMs = 10L,
+            )
 
         // 201/200 = 1.005 → abs(1.005 - 1.0) = 0.005 → exactly at boundary.
         // Boundary is > 0.005, so 0.005 is NOT emitted.
@@ -133,11 +137,12 @@ class GestureDetectorTest {
         )
 
         // Centroid moves 20px and spread grows 20%.
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(500f, 520f),
-            spread = 240f,
-            eventTimeMs = 50L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(500f, 520f),
+                spread = 240f,
+                eventTimeMs = 50L,
+            )
 
         assertEquals(2, events.size)
         assertTrue(events.any { it is GestureEvent.Scroll })
@@ -258,12 +263,95 @@ class GestureDetectorTest {
     @Test
     fun `move before down does not crash and emits nothing`() {
         // No prior onTwoFingersDown call.
-        val events = detector.onTwoFingersMove(
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(100f, 100f),
+                spread = 100f,
+                eventTimeMs = 0L,
+            )
+        assertTrue(events.isEmpty())
+    }
+
+    // A8 — Boundary conditions
+
+    @Test
+    fun `tap at exactly 150ms is NOT a tap (timeout is exclusive)`() {
+        // tapTimeoutMs=150, elapsed must be STRICTLY < 150 to qualify.
+        detector.onTwoFingersDown(
             centroid = Offset(100f, 100f),
             spread = 100f,
             eventTimeMs = 0L,
+            viewWidth = 1080,
+            viewHeight = 1920,
         )
-        assertTrue(events.isEmpty())
+        // Up at exactly 150ms — condition is `elapsed < tapTimeoutMs`, so 150 is not a tap.
+        val events = detector.onTwoFingersUp(eventTimeMs = 150L)
+        assertTrue(
+            events.isEmpty(),
+            "Tap at exactly tapTimeoutMs (150ms) must NOT qualify (elapsed < timeout is strict)",
+        )
+    }
+
+    @Test
+    fun `tap at 149ms with zero movement IS a tap`() {
+        detector.onTwoFingersDown(
+            centroid = Offset(200f, 300f),
+            spread = 100f,
+            eventTimeMs = 0L,
+            viewWidth = 1080,
+            viewHeight = 1920,
+        )
+        // Up at 149ms — just within the 150ms timeout.
+        val events = detector.onTwoFingersUp(eventTimeMs = 149L)
+        assertEquals(1, events.size, "Tap at 149ms with no movement must qualify as RightClick")
+        assertInstanceOf(GestureEvent.RightClick::class.java, events[0])
+    }
+
+    @Test
+    fun `movement of 11dot5px is under 12px threshold — tap qualifies`() {
+        // tapMovementThresholdPx=12; cumulative movement of 11.5 is below threshold.
+        detector.onTwoFingersDown(
+            centroid = Offset(100f, 100f),
+            spread = 100f,
+            eventTimeMs = 0L,
+            viewWidth = 1080,
+            viewHeight = 1920,
+        )
+        // Move 11.5px — strictly below 12px → tap not disqualified.
+        detector.onTwoFingersMove(
+            centroid = Offset(100f + 11.5f, 100f),
+            spread = 100f,
+            eventTimeMs = 50L,
+        )
+        val events = detector.onTwoFingersUp(eventTimeMs = 80L)
+        assertEquals(1, events.size, "Movement of 11.5px is below 12px threshold — tap must qualify")
+        assertInstanceOf(GestureEvent.RightClick::class.java, events[0])
+    }
+
+    @Test
+    fun `three rapid taps in succession each qualify independently after reset`() {
+        // Each tap uses a fresh detector or calls reset() between gestures.
+        // Simulate via onTwoFingersDown→Up three times with reset between.
+        repeat(3) { i ->
+            detector.onTwoFingersDown(
+                centroid = Offset(540f, 960f),
+                spread = 100f,
+                eventTimeMs = (i * 300).toLong(),
+                viewWidth = 1080,
+                viewHeight = 1920,
+            )
+            val events = detector.onTwoFingersUp(eventTimeMs = (i * 300 + 50).toLong())
+            assertEquals(1, events.size, "Tap $i must qualify as RightClick")
+            assertInstanceOf(GestureEvent.RightClick::class.java, events[0])
+            // reset() is called by onTwoFingersUp, so no explicit reset needed.
+        }
+    }
+
+    @Test
+    fun `onTwoFingersUp without prior down returns empty`() {
+        // No onTwoFingersDown call — detector starts fresh, downCentroid=null.
+        val events = detector.onTwoFingersUp(eventTimeMs = 100L)
+        assertTrue(events.isEmpty(), "onTwoFingersUp without prior down must return empty list")
     }
 
     @Test
@@ -276,11 +364,12 @@ class GestureDetectorTest {
             viewHeight = 1920,
         )
 
-        val events = detector.onTwoFingersMove(
-            centroid = Offset(150f, 100f),
-            spread = 200f,
-            eventTimeMs = 50L,
-        )
+        val events =
+            detector.onTwoFingersMove(
+                centroid = Offset(150f, 100f),
+                spread = 200f,
+                eventTimeMs = 50L,
+            )
 
         assertEquals(1, events.size)
         val scroll = assertInstanceOf(GestureEvent.Scroll::class.java, events[0])

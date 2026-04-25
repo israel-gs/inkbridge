@@ -1,15 +1,7 @@
 package com.inkbridge.ui.screens
 
 import android.view.MotionEvent
-import com.inkbridge.domain.model.StylusSink
-import com.inkbridge.domain.model.StylusSample
-import com.inkbridge.domain.model.StylusTransport
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -27,7 +19,6 @@ import org.junit.jupiter.api.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ConnectionViewModelTrackpadTest {
-
     // ── Trackpad state machine replica ─────────────────────────────────────────
 
     /**
@@ -46,7 +37,12 @@ class ConnectionViewModelTrackpadTest {
         private val activateMovementPx = 6f
         private val activateTimeMs = 50L
 
-        fun handleAction(actionMasked: Int, x: Float, y: Float, now: Long) {
+        fun handleAction(
+            actionMasked: Int,
+            x: Float,
+            y: Float,
+            now: Long,
+        ) {
             when (actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     prevX = x

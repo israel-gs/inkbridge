@@ -6,7 +6,6 @@ package com.inkbridge.domain.model
  * Maps to the states defined in transport.md R6 and ui.md R1.
  */
 sealed class ConnectionState {
-
     /** No active transport. Initial state on every launch. */
     data object Disconnected : ConnectionState()
 

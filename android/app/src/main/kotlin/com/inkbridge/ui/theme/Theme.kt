@@ -8,44 +8,38 @@ import androidx.compose.runtime.Composable
 // devices. No system-follow — this is a creative tool and users expect the
 // canvas surface to be dark regardless of OS theme.
 
-private val InkColorScheme = darkColorScheme(
-    primary = InkPrimary,
-    onPrimary = InkOnPrimary,
-    primaryContainer = InkPrimaryContainer,
-    onPrimaryContainer = InkOnPrimaryContainer,
-
-    secondary = InkSecondary,
-    onSecondary = InkOnSecondary,
-    secondaryContainer = InkSecondaryContainer,
-    onSecondaryContainer = InkOnSecondaryContainer,
-
-    tertiary = InkTertiary,
-    onTertiary = InkOnTertiary,
-    tertiaryContainer = InkTertiaryContainer,
-    onTertiaryContainer = InkOnTertiaryContainer,
-
-    error = InkError,
-    onError = InkOnError,
-    errorContainer = InkErrorContainer,
-    onErrorContainer = InkOnErrorContainer,
-
-    background = InkBlack,
-    onBackground = InkOnSurface,
-    surface = InkSurface,
-    onSurface = InkOnSurface,
-    surfaceVariant = InkSurfaceVariant,
-    onSurfaceVariant = InkOnSurfaceVariant,
-    surfaceContainer = InkSurfaceContainer,
-    surfaceContainerHigh = InkSurfaceContainerHigh,
-
-    outline = InkOutline,
-    outlineVariant = InkOutlineVariant,
-)
+private val InkColorScheme =
+    darkColorScheme(
+        primary = InkPrimary,
+        onPrimary = InkOnPrimary,
+        primaryContainer = InkPrimaryContainer,
+        onPrimaryContainer = InkOnPrimaryContainer,
+        secondary = InkSecondary,
+        onSecondary = InkOnSecondary,
+        secondaryContainer = InkSecondaryContainer,
+        onSecondaryContainer = InkOnSecondaryContainer,
+        tertiary = InkTertiary,
+        onTertiary = InkOnTertiary,
+        tertiaryContainer = InkTertiaryContainer,
+        onTertiaryContainer = InkOnTertiaryContainer,
+        error = InkError,
+        onError = InkOnError,
+        errorContainer = InkErrorContainer,
+        onErrorContainer = InkOnErrorContainer,
+        background = InkBlack,
+        onBackground = InkOnSurface,
+        surface = InkSurface,
+        onSurface = InkOnSurface,
+        surfaceVariant = InkSurfaceVariant,
+        onSurfaceVariant = InkOnSurfaceVariant,
+        surfaceContainer = InkSurfaceContainer,
+        surfaceContainerHigh = InkSurfaceContainerHigh,
+        outline = InkOutline,
+        outlineVariant = InkOutlineVariant,
+    )
 
 @Composable
-fun InkBridgeTheme(
-    content: @Composable () -> Unit,
-) {
+fun InkBridgeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = InkColorScheme,
         typography = InkBridgeTypography,

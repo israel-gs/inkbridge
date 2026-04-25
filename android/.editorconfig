@@ -17,3 +17,8 @@ indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+# Compose composable functions use PascalCase — disable the function-naming rule
+# for the UI layer where @Composable functions like InkBridgeTheme live.
+[{app/src/main/kotlin/com/inkbridge/ui/**,app/src/main/kotlin/com/inkbridge/app/ui/**}]
+ktlint_standard_function-naming = disabled

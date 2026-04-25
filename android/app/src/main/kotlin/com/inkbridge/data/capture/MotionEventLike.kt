@@ -11,7 +11,6 @@ package com.inkbridge.data.capture
  * so this file compiles in the plain-JVM test source set.
  */
 interface MotionEventLike {
-
     companion object {
         // Tool type constants — mirrors android.view.MotionEvent
         const val TOOL_TYPE_UNKNOWN: Int = 0
@@ -73,7 +72,10 @@ interface MotionEventLike {
     fun getHistoricalY(pos: Int): Float
 
     /** Raw axis value for historical sample at [pos]. */
-    fun getHistoricalAxisValue(axis: Int, pos: Int): Float
+    fun getHistoricalAxisValue(
+        axis: Int,
+        pos: Int,
+    ): Float
 
     /** Event time in ms for historical sample at [pos] (used to compute timestampNs). */
     fun getHistoricalEventTime(pos: Int): Long
