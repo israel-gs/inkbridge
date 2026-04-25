@@ -5,6 +5,7 @@ import com.inkbridge.domain.model.StylusSink
 import com.inkbridge.domain.model.StylusTransport
 import com.inkbridge.protocol.BinaryStylusCodec
 import com.inkbridge.protocol.Flags
+import com.inkbridge.protocol.KeyAction
 import com.inkbridge.protocol.StylusEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -164,6 +165,24 @@ class StreamStylus(
         timestampNs: Long,
     ) {
         val event = StylusEvent.CursorDelta(deltaX = deltaX, deltaY = deltaY)
+        val seq = nextSequence()
+        val bytes =
+            BinaryStylusCodec.encode(
+                event = event,
+                flags = 0x00u,
+                sequence = seq,
+                timestampNs = timestampNs.toULong(),
+            )
+        sendOrDrop(bytes)
+    }
+
+    override suspend fun emitKey(
+        keyCode: UByte,
+        modifiers: UByte,
+        action: KeyAction,
+        timestampNs: Long,
+    ) {
+        val event = StylusEvent.Key(keyCode = keyCode, modifiers = modifiers, action = action)
         val seq = nextSequence()
         val bytes =
             BinaryStylusCodec.encode(

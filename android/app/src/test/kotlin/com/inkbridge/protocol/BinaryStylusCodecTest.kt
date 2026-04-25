@@ -338,6 +338,68 @@ class BinaryStylusCodecTest {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // KEY_EVENT (express keys) — decode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode key-event vector matches expected StylusEvent Key (Cmd+Z tap)`() {
+        val bytes = loadVector("key-event.hex")
+        assertEquals(20, bytes.size, "KEY_EVENT frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(EventType.KEY_EVENT, frame.header.eventType)
+        assertEquals(42u, frame.header.sequence)
+        assertEquals(12_345uL, frame.header.timestampNs)
+
+        val key = assertInstanceOf(StylusEvent.Key::class.java, frame.event)
+        assertEquals(0x06u.toUByte(), key.keyCode)
+        assertEquals(KeyModifier.CMD, key.modifiers)
+        assertEquals(KeyAction.TAP, key.action)
+    }
+
+    @Test
+    fun `encode KEY_EVENT produces byte-for-byte match with vector`() {
+        val expected = loadVector("key-event.hex")
+        val event = StylusEvent.Key(
+            keyCode = 0x06u,
+            modifiers = KeyModifier.CMD,
+            action = KeyAction.TAP,
+        )
+        val actual = codec.encode(event, flags = 0x00u, sequence = 42u, timestampNs = 12_345uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for modifier-only Ctrl press`() {
+        val event = StylusEvent.Key(
+            keyCode = 0x00u,
+            modifiers = KeyModifier.CTRL,
+            action = KeyAction.PRESS,
+        )
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 7u, timestampNs = 1_000uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val key = assertInstanceOf(StylusEvent.Key::class.java, decoded.event)
+        assertEquals(0x00u.toUByte(), key.keyCode)
+        assertEquals(KeyModifier.CTRL, key.modifiers)
+        assertEquals(KeyAction.PRESS, key.action)
+    }
+
+    @Test
+    fun `decode KEY_EVENT with unknown action byte throws`() {
+        // Manually build a frame with action = 0x99.
+        val data = ByteArray(20)
+        data[0] = 0x01 // version
+        data[1] = 0x07 // event_type
+        data[16] = 0x06.toByte() // key_code
+        data[17] = 0x01.toByte() // modifiers (Cmd)
+        data[18] = 0x99.toByte() // unknown action
+        org.junit.jupiter.api.assertThrows<ProtocolException> { codec.decode(data) }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Error / discard tests (R2, R4, R8)
     // ─────────────────────────────────────────────────────────────
 

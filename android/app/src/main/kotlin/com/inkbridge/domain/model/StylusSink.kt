@@ -80,4 +80,19 @@ interface StylusSink {
         deltaY: Short,
         timestampNs: Long,
     )
+
+    /**
+     * Emits an express-key event (keyboard shortcut or modifier hold).
+     *
+     * @param keyCode   macOS virtual keycode (kVK_*) — 0u for modifier-only.
+     * @param modifiers Bitfield: bit 0 Cmd, bit 1 Ctrl, bit 2 Opt, bit 3 Shift.
+     * @param action    PRESS, RELEASE, or TAP.
+     * @param timestampNs Monotonic nanosecond timestamp.
+     */
+    suspend fun emitKey(
+        keyCode: UByte,
+        modifiers: UByte,
+        action: com.inkbridge.protocol.KeyAction,
+        timestampNs: Long,
+    )
 }

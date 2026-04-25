@@ -1,6 +1,7 @@
 package com.inkbridge.data.settings
 
 import android.content.SharedPreferences
+import com.inkbridge.domain.model.ExpressKeysEdge
 import com.inkbridge.domain.model.TransportKind
 
 /**
@@ -26,6 +27,8 @@ class SettingsRepository(private val prefs: SharedPreferences) {
         const val KEY_AUTO_RECONNECT = "pref_auto_reconnect"
         const val KEY_HAPTIC_INTENSITY = "pref_haptic_intensity"
         const val KEY_CLICK_FLASH = "pref_click_flash"
+        const val KEY_EXPRESS_KEYS_ENABLED = "pref_express_keys_enabled"
+        const val KEY_EXPRESS_KEYS_EDGE = "pref_express_keys_edge"
     }
 
     /**
@@ -99,4 +102,23 @@ class SettingsRepository(private val prefs: SharedPreferences) {
     var clickFlashEnabled: Boolean
         get() = prefs.getBoolean(KEY_CLICK_FLASH, true)
         set(value) = prefs.edit().putBoolean(KEY_CLICK_FLASH, value).apply()
+
+    /**
+     * Whether the express-keys overlay is shown on the capture canvas.
+     * Default false — the canvas is empty by design; users opt-in.
+     */
+    var expressKeysEnabled: Boolean
+        get() = prefs.getBoolean(KEY_EXPRESS_KEYS_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_EXPRESS_KEYS_ENABLED, value).apply()
+
+    /**
+     * Which edge the express-keys bar lives on (left or right).
+     * Default RIGHT — handedness assumption for diestro users; flip in settings.
+     */
+    var expressKeysEdge: ExpressKeysEdge
+        get() {
+            val ord = prefs.getInt(KEY_EXPRESS_KEYS_EDGE, ExpressKeysEdge.RIGHT.ordinal)
+            return ExpressKeysEdge.entries.getOrNull(ord) ?: ExpressKeysEdge.RIGHT
+        }
+        set(value) = prefs.edit().putInt(KEY_EXPRESS_KEYS_EDGE, value.ordinal).apply()
 }

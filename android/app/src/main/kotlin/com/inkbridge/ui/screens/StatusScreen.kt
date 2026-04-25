@@ -101,6 +101,16 @@ fun StatusScreen(
     onSetClickFlashEnabled: (Boolean) -> Unit = {},
     clickFlashes: kotlinx.coroutines.flow.SharedFlow<androidx.compose.ui.geometry.Offset>? = null,
     isAutoReconnecting: Boolean = false,
+    expressKeysEnabled: Boolean = false,
+    onSetExpressKeysEnabled: (Boolean) -> Unit = {},
+    expressKeysEdge: com.inkbridge.domain.model.ExpressKeysEdge =
+        com.inkbridge.domain.model.ExpressKeysEdge.RIGHT,
+    onSetExpressKeysEdge: (com.inkbridge.domain.model.ExpressKeysEdge) -> Unit = {},
+    expressKeys: List<com.inkbridge.domain.model.ExpressKey> = emptyList(),
+    onExpressKeyAction: (
+        com.inkbridge.domain.model.ExpressKeyAction,
+        com.inkbridge.protocol.KeyAction,
+    ) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -148,17 +158,29 @@ fun StatusScreen(
             AutoReconnectBanner()
         }
 
-        CaptureSurface(
-            connectionState = connectionState,
-            onMotionEvent = onMotionEvent,
-            onGestureEvent = onGestureEvent,
-            onTrackpadEvent = onTrackpadEvent,
-            clickFlashes = clickFlashes,
+        Box(
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .weight(1f),
-        )
+        ) {
+            CaptureSurface(
+                connectionState = connectionState,
+                onMotionEvent = onMotionEvent,
+                onGestureEvent = onGestureEvent,
+                onTrackpadEvent = onTrackpadEvent,
+                clickFlashes = clickFlashes,
+                modifier = Modifier.matchParentSize(),
+            )
+            if (expressKeysEnabled && expressKeys.isNotEmpty()) {
+                ExpressKeyBar(
+                    keys = expressKeys,
+                    edge = expressKeysEdge,
+                    onKeyAction = onExpressKeyAction,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
     }
 
     if (showSettings) {
@@ -176,6 +198,10 @@ fun StatusScreen(
                 onPreviewHaptic = onPreviewHaptic,
                 clickFlashEnabled = clickFlashEnabled,
                 onClickFlashChange = onSetClickFlashEnabled,
+                expressKeysEnabled = expressKeysEnabled,
+                onExpressKeysEnabledChange = onSetExpressKeysEnabled,
+                expressKeysEdge = expressKeysEdge,
+                onExpressKeysEdgeChange = onSetExpressKeysEdge,
             )
         }
     }
@@ -385,6 +411,11 @@ private fun SettingsSheet(
     onPreviewHaptic: () -> Unit = {},
     clickFlashEnabled: Boolean = true,
     onClickFlashChange: (Boolean) -> Unit = {},
+    expressKeysEnabled: Boolean = false,
+    onExpressKeysEnabledChange: (Boolean) -> Unit = {},
+    expressKeysEdge: com.inkbridge.domain.model.ExpressKeysEdge =
+        com.inkbridge.domain.model.ExpressKeysEdge.RIGHT,
+    onExpressKeysEdgeChange: (com.inkbridge.domain.model.ExpressKeysEdge) -> Unit = {},
 ) {
     Column(
         modifier =
@@ -487,6 +518,84 @@ private fun SettingsSheet(
                 onCheckedChange = onClickFlashChange,
             )
         }
+        HorizontalDivider()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Express keys",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "Edge column with 6 shortcut/modifier keys (Ctrl, Undo, Redo, [, ], Pan).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = expressKeysEnabled,
+                onCheckedChange = onExpressKeysEnabledChange,
+            )
+        }
+        if (expressKeysEnabled) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp, bottom = 12.dp),
+            ) {
+                Text(
+                    text = "Side",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                EdgeChip(
+                    label = "Left",
+                    selected = expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.LEFT,
+                    onClick = {
+                        onExpressKeysEdgeChange(com.inkbridge.domain.model.ExpressKeysEdge.LEFT)
+                    },
+                )
+                EdgeChip(
+                    label = "Right",
+                    selected = expressKeysEdge == com.inkbridge.domain.model.ExpressKeysEdge.RIGHT,
+                    onClick = {
+                        onExpressKeysEdgeChange(com.inkbridge.domain.model.ExpressKeysEdge.RIGHT)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EdgeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val cyan = androidx.compose.ui.graphics.Color(0xFF00C8FF)
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = if (selected) cyan.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = if (selected) cyan.copy(alpha = 0.6f) else androidx.compose.ui.graphics.Color.Transparent,
+        ),
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            color = if (selected) cyan else MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 

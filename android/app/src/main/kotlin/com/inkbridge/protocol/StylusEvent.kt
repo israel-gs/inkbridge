@@ -45,6 +45,31 @@ object EventType {
     const val STYLUS_SCROLL: UByte = 0x04u
     const val STYLUS_ZOOM: UByte = 0x05u
     const val CURSOR_DELTA: UByte = 0x06u
+    const val KEY_EVENT: UByte = 0x07u
+}
+
+/**
+ * Express-key action carried by KEY_EVENT frames. wire-protocol.md R2.
+ */
+enum class KeyAction(val rawValue: UByte) {
+    PRESS(0x01u),
+    RELEASE(0x02u),
+    TAP(0x03u);
+
+    companion object {
+        fun fromByte(b: UByte): KeyAction? = entries.firstOrNull { it.rawValue == b }
+    }
+}
+
+/**
+ * Modifier bitfield used by KEY_EVENT frames. Bit positions:
+ *   bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift.
+ */
+object KeyModifier {
+    const val CMD: UByte = 0x01u
+    const val CTRL: UByte = 0x02u
+    const val OPT: UByte = 0x04u
+    const val SHIFT: UByte = 0x08u
 }
 
 /**
@@ -125,6 +150,21 @@ sealed class StylusEvent {
     data class CursorDelta(
         val deltaX: Short,
         val deltaY: Short,
+    ) : StylusEvent()
+
+    /**
+     * KEY_EVENT (event_type = 0x07) — express-key press / release / tap.
+     * Payload: 4 bytes. Total frame: 20 bytes.
+     *
+     * @param keyCode   macOS virtual keycode (kVK_*) for shortcut keys, or 0x00
+     *                  for modifier-only events. wire-protocol.md R3.
+     * @param modifiers Bitfield: bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift.
+     * @param action    press, release, or tap (atomic press+release).
+     */
+    data class Key(
+        val keyCode: UByte,
+        val modifiers: UByte,
+        val action: KeyAction,
     ) : StylusEvent()
 }
 

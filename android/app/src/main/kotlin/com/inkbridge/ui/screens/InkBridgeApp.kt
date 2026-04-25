@@ -41,6 +41,8 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
     val isAutoReconnecting by viewModel.isAutoReconnecting.collectAsState()
     val hapticIntensity by viewModel.hapticIntensity.collectAsState()
     val clickFlashEnabled by viewModel.clickFlashEnabled.collectAsState()
+    val expressKeysEnabled by viewModel.expressKeysEnabled.collectAsState()
+    val expressKeysEdge by viewModel.expressKeysEdge.collectAsState()
 
     // Feature 3: wire haptic feedback.
     //
@@ -174,6 +176,14 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
                 clickFlashEnabled = clickFlashEnabled,
                 onSetClickFlashEnabled = { viewModel.setClickFlashEnabled(it) },
                 clickFlashes = viewModel.clickFlashes,
+                expressKeysEnabled = expressKeysEnabled,
+                onSetExpressKeysEnabled = { viewModel.setExpressKeysEnabled(it) },
+                expressKeysEdge = expressKeysEdge,
+                onSetExpressKeysEdge = { viewModel.setExpressKeysEdge(it) },
+                expressKeys = viewModel.expressKeys,
+                onExpressKeyAction = { action, wireAction ->
+                    viewModel.onExpressKey(action, wireAction)
+                },
             )
         }
     }

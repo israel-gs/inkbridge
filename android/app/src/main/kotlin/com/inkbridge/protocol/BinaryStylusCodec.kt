@@ -83,6 +83,11 @@ object BinaryStylusCodec {
                 payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
                 writePayload = { buf -> writeCursorDeltaPayload(buf, event) }
             }
+            is StylusEvent.Key -> {
+                eventTypeByte = EventType.KEY_EVENT.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeKeyPayload(buf, event) }
+            }
         }
 
         val buf = ByteBuffer.allocate(HEADER_SIZE + payloadSize).order(ByteOrder.LITTLE_ENDIAN)
@@ -163,6 +168,16 @@ object BinaryStylusCodec {
         buf.putShort(event.deltaY) // offset 18–19: delta_y i16 LE
     }
 
+    private fun writeKeyPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.Key,
+    ) {
+        buf.put(event.keyCode.toByte())          // offset 16: key_code
+        buf.put(event.modifiers.toByte())        // offset 17: modifiers
+        buf.put(event.action.rawValue.toByte())  // offset 18: action
+        buf.put(0x00)                            // offset 19: _pad
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Decode
     // ─────────────────────────────────────────────────────────────
@@ -217,6 +232,7 @@ object BinaryStylusCodec {
                 EventType.STYLUS_SCROLL -> decodeScrollPayload(bytes, buf)
                 EventType.STYLUS_ZOOM -> decodeZoomPayload(bytes, buf)
                 EventType.CURSOR_DELTA -> decodeCursorDeltaPayload(bytes, buf)
+                EventType.KEY_EVENT -> decodeKeyPayload(bytes, buf)
                 else -> throw ProtocolException(
                     "Unknown event_type: 0x${eventType.toString(16).uppercase()}",
                 )
@@ -327,5 +343,26 @@ object BinaryStylusCodec {
         val deltaX = buf.getShort()
         val deltaY = buf.getShort()
         return StylusEvent.CursorDelta(deltaX = deltaX, deltaY = deltaY)
+    }
+
+    private fun decodeKeyPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.Key {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException(
+                "KEY_EVENT frame too short: expected at least $required bytes, got ${bytes.size}",
+            )
+        }
+        val keyCode = buf.get().toUByte()
+        val modifiers = buf.get().toUByte()
+        val actionByte = buf.get().toUByte()
+        buf.get() // _pad
+        val action = KeyAction.fromByte(actionByte)
+            ?: throw ProtocolException(
+                "Unknown KEY_EVENT action: 0x${actionByte.toString(16).uppercase()}",
+            )
+        return StylusEvent.Key(keyCode = keyCode, modifiers = modifiers, action = action)
     }
 }

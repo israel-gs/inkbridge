@@ -72,6 +72,15 @@ class ConnectionViewModelEmitOrderTest {
         ) {
             calls.add("cursor($deltaX,$deltaY)")
         }
+
+        override suspend fun emitKey(
+            keyCode: UByte,
+            modifiers: UByte,
+            action: com.inkbridge.protocol.KeyAction,
+            timestampNs: Long,
+        ) {
+            calls.add("key($keyCode,$modifiers,$action)")
+        }
     }
 
     // ── Bug 1: ACTION_DOWN sample arrives before button ────────────────────────

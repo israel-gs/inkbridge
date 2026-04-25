@@ -177,6 +177,54 @@ class ConnectionViewModel(
         _clickFlashEnabled.value = enabled
     }
 
+    // ── Express keys ───────────────────────────────────────────────────────────
+
+    private val _expressKeysEnabled = MutableStateFlow(settings.expressKeysEnabled)
+    val expressKeysEnabled: StateFlow<Boolean> = _expressKeysEnabled.asStateFlow()
+
+    fun setExpressKeysEnabled(enabled: Boolean) {
+        settings.expressKeysEnabled = enabled
+        _expressKeysEnabled.value = enabled
+    }
+
+    private val _expressKeysEdge = MutableStateFlow(settings.expressKeysEdge)
+    val expressKeysEdge: StateFlow<com.inkbridge.domain.model.ExpressKeysEdge> =
+        _expressKeysEdge.asStateFlow()
+
+    fun setExpressKeysEdge(edge: com.inkbridge.domain.model.ExpressKeysEdge) {
+        settings.expressKeysEdge = edge
+        _expressKeysEdge.value = edge
+    }
+
+    /** Default 6-slot preset. Editing UI is deferred — config is fixed for now. */
+    val expressKeys: List<com.inkbridge.domain.model.ExpressKey> =
+        com.inkbridge.domain.model.DefaultExpressKeys
+
+    /**
+     * Called by the express-key bar when a key is tapped (Shortcut action) or
+     * its press/release transitions occur (ModifierHold). Encodes and emits a
+     * KEY_EVENT frame on the wire.
+     */
+    fun onExpressKey(
+        action: com.inkbridge.domain.model.ExpressKeyAction,
+        wireAction: com.inkbridge.protocol.KeyAction,
+    ) {
+        val (keyCode, modifiers) = when (action) {
+            is com.inkbridge.domain.model.ExpressKeyAction.Shortcut ->
+                action.keyCode to action.modifiers
+            is com.inkbridge.domain.model.ExpressKeyAction.ModifierHold ->
+                action.keyCode to action.modifiers
+        }
+        viewModelScope.launch {
+            streamStylus.emitKey(
+                keyCode = keyCode,
+                modifiers = modifiers,
+                action = wireAction,
+                timestampNs = System.nanoTime(),
+            )
+        }
+    }
+
     /**
      * Stream of click-flash events. Each emission carries the **normalised**
      * (0..1) position on the capture surface where a click was confirmed.
