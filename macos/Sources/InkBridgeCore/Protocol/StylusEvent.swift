@@ -51,6 +51,14 @@ public enum EventTypeValue {
     public static let stylusScroll: UInt8    = 0x04
     public static let stylusZoom: UInt8      = 0x05
     public static let cursorDelta: UInt8     = 0x06
+    public static let keyEvent: UInt8        = 0x07
+}
+
+/// Express-key action carried by KEY_EVENT frames. wire-protocol.md R2.
+public enum KeyAction: UInt8, Sendable, Equatable {
+    case press   = 0x01
+    case release = 0x02
+    case tap     = 0x03
 }
 
 /// Structured representation of a stylus event decoded from the wire format.
@@ -95,6 +103,15 @@ public enum StylusEvent: Equatable, Sendable {
     /// CURSOR_DELTA (event_type = 0x06) — single-finger relative cursor movement (trackpad).
     /// Payload: 4 bytes. Total frame: 20 bytes.
     case cursorDelta(deltaX: Int16, deltaY: Int16)
+
+    /// KEY_EVENT (event_type = 0x07) — express-key press / release / tap.
+    /// Payload: 4 bytes. Total frame: 20 bytes.
+    ///
+    /// - keyCode:   macOS virtual keycode (kVK_*) for shortcut keys, or `0x00`
+    ///              for modifier-only events. wire-protocol.md R3.
+    /// - modifiers: bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift.
+    /// - action:    press, release, or tap (atomic press+release).
+    case key(keyCode: UInt8, modifiers: UInt8, action: KeyAction)
 }
 
 /// A successfully decoded wire frame.

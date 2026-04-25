@@ -210,6 +210,17 @@ public final class InkBridgeServer: ObservableObject {
             recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
             return
 
+        case let .key(keyCode, modifiers, action):
+            do {
+                try injector.injectKey(keyCode: keyCode, modifiers: modifiers, action: action)
+            } catch InjectorError.notTrusted {
+                state = .degraded(reason: "Accessibility permission required")
+            } catch {
+                stats.injectionFailures += 1
+            }
+            recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+            return
+
         case let .cursorDelta(deltaX, deltaY):
             do {
                 try injector.injectCursorDelta(deltaX: deltaX, deltaY: deltaY)

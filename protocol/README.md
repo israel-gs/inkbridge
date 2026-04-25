@@ -31,6 +31,10 @@ This directory documents the binary frame format exchanged between the Android c
 | `0x01` | `STYLUS_MOVE` | 20 bytes | **36 bytes** |
 | `0x02` | `STYLUS_PROXIMITY` | 4 bytes | **20 bytes** |
 | `0x03` | `STYLUS_BUTTON` | 4 bytes | **20 bytes** |
+| `0x04` | `STYLUS_SCROLL` | 4 bytes | **20 bytes** |
+| `0x05` | `STYLUS_ZOOM` | 4 bytes | **20 bytes** |
+| `0x06` | `CURSOR_DELTA` | 4 bytes | **20 bytes** |
+| `0x07` | `KEY_EVENT` | 4 bytes | **20 bytes** |
 
 All other `event_type` values are reserved. Decoders MUST discard unknown types without crashing.
 
@@ -83,6 +87,19 @@ When `entering = 0x00`, the `HOVER` flag MUST be `0`.
 | 1 | 3 | — | `_pad` | MUST be `0x000000`; receiver MUST ignore. |
 
 `buttons` MUST be consistent with bits 3–4 of `flags`. Inconsistency → discard.
+
+---
+
+## KEY_EVENT payload (4 bytes, offset 16–19)
+
+| Offset from payload start | Size | Type | Field | Description |
+|---------------------------|------|------|-------|-------------|
+| 0 | 1 | u8 | `key_code` | macOS virtual keycode (`kVK_*`) for shortcut keys; or `0x00` for modifier-only events. |
+| 1 | 1 | u8 | `modifiers` | Bitfield: bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift. Bits 4–7 reserved. |
+| 2 | 1 | u8 | `action` | `0x01` = press, `0x02` = release, `0x03` = tap (atomic press+release). |
+| 3 | 1 | u8 | `_pad` | MUST be `0x00`; receiver MUST ignore. |
+
+When `key_code == 0x00`, the receiver MUST treat the event as modifier-only and emit a `flagsChanged` event rather than a virtual keycode.
 
 ---
 

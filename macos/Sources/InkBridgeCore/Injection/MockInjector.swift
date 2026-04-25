@@ -19,6 +19,9 @@ public final class MockInjector: Injector {
     /// All recorded cursor delta injection calls: (deltaX, deltaY).
     public private(set) var cursorDeltaCalls: [(Int16, Int16)] = []
 
+    /// All recorded key injection calls: (keyCode, modifiers, action).
+    public private(set) var keyCalls: [(UInt8, UInt8, KeyAction)] = []
+
     /// When non-nil, the next `inject` call will throw this error.
     public var nextError: InjectorError?
 
@@ -44,12 +47,17 @@ public final class MockInjector: Injector {
         cursorDeltaCalls.append((deltaX, deltaY))
     }
 
+    public func injectKey(keyCode: UInt8, modifiers: UInt8, action: KeyAction) throws {
+        keyCalls.append((keyCode, modifiers, action))
+    }
+
     /// Clears recorded calls and resets any pending error.
     public func reset() {
         calls.removeAll()
         scrollCalls.removeAll()
         zoomCalls.removeAll()
         cursorDeltaCalls.removeAll()
+        keyCalls.removeAll()
         nextError = nil
     }
 }

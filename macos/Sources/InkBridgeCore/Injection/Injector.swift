@@ -44,6 +44,15 @@ public protocol Injector: AnyObject {
     ///   - deltaY: Vertical cursor delta in points (negative = up).
     /// - Throws: ``InjectorError`` if the event cannot be injected.
     func injectCursorDelta(deltaX: Int16, deltaY: Int16) throws
+
+    /// Inject an express-key event (keyboard shortcut or modifier hold).
+    ///
+    /// - Parameters:
+    ///   - keyCode:   macOS virtual keycode (kVK_*); `0x00` for modifier-only.
+    ///   - modifiers: bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift.
+    ///   - action:    press, release, or tap.
+    /// - Throws: ``InjectorError`` if the event cannot be injected.
+    func injectKey(keyCode: UInt8, modifiers: UInt8, action: KeyAction) throws
 }
 
 /// Default no-op implementations so existing conformers need not change.

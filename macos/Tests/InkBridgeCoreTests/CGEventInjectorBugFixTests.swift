@@ -86,6 +86,10 @@ final class CGEventInjectorBugFixTests: XCTestCase {
         func injectCursorDelta(deltaX: Int16, deltaY: Int16) throws {
             try mock.injectCursorDelta(deltaX: deltaX, deltaY: deltaY)
         }
+
+        func injectKey(keyCode: UInt8, modifiers: UInt8, action: KeyAction) throws {
+            try mock.injectKey(keyCode: keyCode, modifiers: modifiers, action: action)
+        }
     }
 
     func testRefreshTrustIsNotCalledByInject() throws {

@@ -87,6 +87,12 @@ public struct BinaryStylusCodec {
             payloadWriter = { data in
                 writeScrollPayload(into: &data, deltaX: deltaX, deltaY: deltaY)
             }
+        case let .key(keyCode, modifiers, action):
+            eventType = EventTypeValue.keyEvent
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeKeyPayload(into: &data, keyCode: keyCode, modifiers: modifiers, action: action)
+            }
         }
 
         var data = Data(capacity: headerSize + payloadSize)
@@ -153,6 +159,18 @@ public struct BinaryStylusCodec {
         data.appendLE(scaleDelta)  // offset 16–19: scale_delta f32 LE
     }
 
+    private static func writeKeyPayload(
+        into data: inout Data,
+        keyCode: UInt8,
+        modifiers: UInt8,
+        action: KeyAction
+    ) {
+        data.append(keyCode)            // offset 16: key_code
+        data.append(modifiers)          // offset 17: modifiers
+        data.append(action.rawValue)    // offset 18: action
+        data.append(0x00)               // offset 19: _pad
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Decode
     // ─────────────────────────────────────────────────────────────
@@ -207,6 +225,8 @@ public struct BinaryStylusCodec {
             event = try decodeZoomPayload(data: data, cursor: &cursor)
         case EventTypeValue.cursorDelta:
             event = try decodeCursorDeltaPayload(data: data, cursor: &cursor)
+        case EventTypeValue.keyEvent:
+            event = try decodeKeyPayload(data: data, cursor: &cursor)
         default:
             throw ProtocolError.unknownType(got: eventType)
         }
@@ -282,6 +302,22 @@ public struct BinaryStylusCodec {
         let deltaX = data.readLE(Int16.self, at: &cursor)
         let deltaY = data.readLE(Int16.self, at: &cursor)
         return .cursorDelta(deltaX: deltaX, deltaY: deltaY)
+    }
+
+    private static func decodeKeyPayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+
+        let keyCode   = data.read(UInt8.self, at: &cursor)
+        let modifiers = data.read(UInt8.self, at: &cursor)
+        let actionRaw = data.read(UInt8.self, at: &cursor)
+        // _pad consumed and discarded.
+        _ = data.read(UInt8.self, at: &cursor)
+
+        guard let action = KeyAction(rawValue: actionRaw) else {
+            throw ProtocolError.unknownType(got: actionRaw)
+        }
+        return .key(keyCode: keyCode, modifiers: modifiers, action: action)
     }
 }
 

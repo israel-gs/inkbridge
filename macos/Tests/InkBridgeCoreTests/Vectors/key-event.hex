@@ -1,0 +1,2 @@
+# KEY_EVENT Cmd+Z tap | version=1 event_type=0x07 flags=0x00 _reserved=0x00 sequence=42 timestamp_ns=12345 | key_code=0x06(kVK_ANSI_Z) modifiers=0x01(Cmd) action=0x03(tap) _pad=0x00 | total=20 bytes
+01 07 00 00 2A 00 00 00 39 30 00 00 00 00 00 00 06 01 03 00

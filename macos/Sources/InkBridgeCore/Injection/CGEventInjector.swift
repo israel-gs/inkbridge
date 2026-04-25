@@ -262,6 +262,80 @@ public final class CGEventInjector: Injector {
         moveEvent.post(tap: .cgSessionEventTap)
     }
 
+    /// Inject a keyboard event for an express-key press / release / tap.
+    ///
+    /// - `keyCode == 0` is treated as a modifier-only event: posts a
+    ///   `flagsChanged` event with the requested modifier flags asserted (press)
+    ///   or cleared (release). wire-protocol.md R3.
+    /// - For non-zero `keyCode`, posts a real keyDown / keyUp pair via
+    ///   `CGEvent(keyboardEventSource:virtualKey:keyDown:)`. Modifier flags are
+    ///   set on both events so the OS sees the modifier as held during the
+    ///   keystroke. wire-protocol.md R5.
+    public func injectKey(keyCode: UInt8, modifiers: UInt8, action: KeyAction) throws {
+        guard isTrusted else { throw InjectorError.notTrusted }
+
+        let cgFlags = Self.cgFlags(forModifierBitfield: modifiers)
+
+        // Modifier-only event (no virtual keycode) — emit flagsChanged.
+        if keyCode == 0 {
+            guard let event = CGEvent(source: eventSource) else {
+                throw InjectorError.eventCreationFailed
+            }
+            event.type = .flagsChanged
+            switch action {
+            case .press:           event.flags = cgFlags
+            case .release:         event.flags = []
+            case .tap:
+                // A "tap" of a modifier is meaningless on its own — emit it as
+                // a press immediately followed by a release so accidental taps
+                // don't leave the modifier latched.
+                event.flags = cgFlags
+                event.post(tap: .cgSessionEventTap)
+                guard let release = CGEvent(source: eventSource) else { return }
+                release.type = .flagsChanged
+                release.flags = []
+                release.post(tap: .cgSessionEventTap)
+                return
+            }
+            event.post(tap: .cgSessionEventTap)
+            return
+        }
+
+        // Regular keyboard event.
+        switch action {
+        case .press:
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true, flags: cgFlags)
+        case .release:
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: cgFlags)
+        case .tap:
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true,  flags: cgFlags)
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: cgFlags)
+        }
+    }
+
+    /// Translates the wire-format modifier bitfield (Cmd=1, Ctrl=2, Opt=4,
+    /// Shift=8) into `CGEventFlags`.
+    private static func cgFlags(forModifierBitfield bitfield: UInt8) -> CGEventFlags {
+        var flags: CGEventFlags = []
+        if bitfield & 0x01 != 0 { flags.insert(.maskCommand) }
+        if bitfield & 0x02 != 0 { flags.insert(.maskControl) }
+        if bitfield & 0x04 != 0 { flags.insert(.maskAlternate) }
+        if bitfield & 0x08 != 0 { flags.insert(.maskShift) }
+        return flags
+    }
+
+    private func postKey(virtualKey: CGKeyCode, keyDown: Bool, flags: CGEventFlags) throws {
+        guard let event = CGEvent(
+            keyboardEventSource: eventSource,
+            virtualKey: virtualKey,
+            keyDown: keyDown
+        ) else {
+            throw InjectorError.eventCreationFailed
+        }
+        event.flags = flags
+        event.post(tap: .cgSessionEventTap)
+    }
+
     public func injectZoom(scaleDelta: Float) throws {
         if preferGestureEvent {
             // kCGEventTypeGesture is undocumented; historically raw value 29.
