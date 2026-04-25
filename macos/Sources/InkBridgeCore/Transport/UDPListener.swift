@@ -12,17 +12,22 @@ import Network
 public final class UDPListener: PacketListener {
 
     // MARK: - Public AsyncStreams
-
-    public let frames: AsyncStream<DecodedFrame>
-    public let errors: AsyncStream<Error>
+    //
+    // AsyncStream is single-iterator: once cancelled (when the consumer Task is
+    // cancelled by stop()), the same stream cannot be re-iterated cleanly. So
+    // both `frames` and `errors` are recreated on every `start()` call, and the
+    // server's start() captures the fresh stream just after listener.start()
+    // returns. The previous session's continuations are finished in stop().
+    public private(set) var frames: AsyncStream<DecodedFrame> = AsyncStream { _ in }
+    public private(set) var errors: AsyncStream<Error> = AsyncStream { _ in }
 
     // MARK: - Private
 
     private let port: UInt16
     private let codec: BinaryStylusCodec
     private var listener: NWListener?
-    private let frameContinuation: AsyncStream<DecodedFrame>.Continuation
-    private let errorContinuation: AsyncStream<Error>.Continuation
+    private var frameContinuation: AsyncStream<DecodedFrame>.Continuation?
+    private var errorContinuation: AsyncStream<Error>.Continuation?
 
     /// Last accepted sequence number per remote endpoint (keyed by description string).
     /// Protects against out-of-order datagrams per wire-protocol.md R9.
@@ -51,28 +56,33 @@ public final class UDPListener: PacketListener {
     public init(port: UInt16, codec: BinaryStylusCodec = BinaryStylusCodec()) {
         self.port = port
         self.codec = codec
-
-        var fc: AsyncStream<DecodedFrame>.Continuation!
-        var ec: AsyncStream<Error>.Continuation!
-
-        self.frames = AsyncStream<DecodedFrame> { continuation in
-            fc = continuation
-        }
-        self.errors = AsyncStream<Error> { continuation in
-            ec = continuation
-        }
-
-        self.frameContinuation = fc
-        self.errorContinuation = ec
+        recreateStreams()
     }
 
     deinit {
         stop()
     }
 
+    /// Replaces `frames` and `errors` with fresh AsyncStreams. Called from
+    /// `init` and from `start()` so each start session has its own stream
+    /// (single-iterator contract).
+    private func recreateStreams() {
+        var fc: AsyncStream<DecodedFrame>.Continuation!
+        var ec: AsyncStream<Error>.Continuation!
+        self.frames = AsyncStream<DecodedFrame> { continuation in fc = continuation }
+        self.errors = AsyncStream<Error> { continuation in ec = continuation }
+        self.frameContinuation = fc
+        self.errorContinuation = ec
+    }
+
     // MARK: - PacketListener
 
     public func start() throws {
+        // Fresh streams for this session — the previous session's iterator
+        // (in InkBridgeServer) was cancelled by stop(), so we hand the new
+        // start() a virgin stream.
+        recreateStreams()
+
         let params = NWParameters.udp
         // Bind to all interfaces so Wi-Fi clients can reach us. transport.md R3.
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
@@ -89,10 +99,9 @@ public final class UDPListener: PacketListener {
         l.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed(let error):
-                self?.errorContinuation.yield(error)
+                self?.errorContinuation?.yield(error)
             case .cancelled:
-                self?.frameContinuation.finish()
-                self?.errorContinuation.finish()
+                break
             default:
                 break
             }
@@ -104,6 +113,12 @@ public final class UDPListener: PacketListener {
     public func stop() {
         listener?.cancel()
         listener = nil
+        // Terminate the current session's streams so InkBridgeServer's
+        // for-await loop exits cleanly; start() will create new ones next.
+        frameContinuation?.finish()
+        errorContinuation?.finish()
+        frameContinuation = nil
+        errorContinuation = nil
     }
 
     // MARK: - Connection handling
@@ -118,7 +133,7 @@ public final class UDPListener: PacketListener {
             guard let self else { return }
 
             if let error {
-                self.errorContinuation.yield(error)
+                self.errorContinuation?.yield(error)
             }
 
             if let data, !data.isEmpty {
@@ -169,9 +184,9 @@ public final class UDPListener: PacketListener {
             sequenceLock.unlock()
 
             if shouldDrop { return }
-            frameContinuation.yield(frame)
+            frameContinuation?.yield(frame)
         } catch {
-            errorContinuation.yield(error)
+            errorContinuation?.yield(error)
         }
     }
 }

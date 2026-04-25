@@ -45,9 +45,19 @@ struct StatusView: View {
                 }
             }
 
-            // Stop button
-            Button("Stop Server", role: .destructive) {
-                viewModel.stopServer()
+            // Start/Stop toggle — label and action follow serverState so the
+            // user can restart after stopping without relaunching the app.
+            Group {
+                switch viewModel.serverState {
+                case .listening, .degraded:
+                    Button("Stop Server", role: .destructive) {
+                        viewModel.stopServer()
+                    }
+                case .idle:
+                    Button("Start Server") {
+                        viewModel.startServer()
+                    }
+                }
             }
             .buttonStyle(.bordered)
             .frame(maxWidth: .infinity)

@@ -16,9 +16,12 @@ import Network
 public final class TCPListener: PacketListener {
 
     // MARK: - Public AsyncStreams
-
-    public let frames: AsyncStream<DecodedFrame>
-    public let errors: AsyncStream<Error>
+    //
+    // Recreated per `start()` session — AsyncStream is single-iterator and the
+    // server's consumer Task is cancelled in stop(). See UDPListener for the
+    // full rationale.
+    public private(set) var frames: AsyncStream<DecodedFrame> = AsyncStream { _ in }
+    public private(set) var errors: AsyncStream<Error> = AsyncStream { _ in }
 
     // MARK: - Private
 
@@ -26,36 +29,36 @@ public final class TCPListener: PacketListener {
     private let codec: BinaryStylusCodec
     private var listener: NWListener?
     private var activeConnection: NWConnection?
-    private let frameContinuation: AsyncStream<DecodedFrame>.Continuation
-    private let errorContinuation: AsyncStream<Error>.Continuation
+    private var frameContinuation: AsyncStream<DecodedFrame>.Continuation?
+    private var errorContinuation: AsyncStream<Error>.Continuation?
 
     // MARK: - Init
 
     public init(port: UInt16, codec: BinaryStylusCodec = BinaryStylusCodec()) {
         self.port = port
         self.codec = codec
-
-        var fc: AsyncStream<DecodedFrame>.Continuation!
-        var ec: AsyncStream<Error>.Continuation!
-
-        self.frames = AsyncStream<DecodedFrame> { continuation in
-            fc = continuation
-        }
-        self.errors = AsyncStream<Error> { continuation in
-            ec = continuation
-        }
-
-        self.frameContinuation = fc
-        self.errorContinuation = ec
+        recreateStreams()
     }
 
     deinit {
         stop()
     }
 
+    private func recreateStreams() {
+        var fc: AsyncStream<DecodedFrame>.Continuation!
+        var ec: AsyncStream<Error>.Continuation!
+        self.frames = AsyncStream<DecodedFrame> { continuation in fc = continuation }
+        self.errors = AsyncStream<Error> { continuation in ec = continuation }
+        self.frameContinuation = fc
+        self.errorContinuation = ec
+    }
+
     // MARK: - PacketListener
 
     public func start() throws {
+        // Fresh streams for this session.
+        recreateStreams()
+
         // Disable Nagle's algorithm so small stylus packets are sent immediately
         // rather than being buffered for up to ~200ms by the kernel. Without this,
         // the 20–36 byte frames are coalesced, adding significant draw latency.
@@ -84,10 +87,9 @@ public final class TCPListener: PacketListener {
         l.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed(let error):
-                self?.errorContinuation.yield(error)
+                self?.errorContinuation?.yield(error)
             case .cancelled:
-                self?.frameContinuation.finish()
-                self?.errorContinuation.finish()
+                break
             default:
                 break
             }
@@ -101,6 +103,12 @@ public final class TCPListener: PacketListener {
         activeConnection = nil
         listener?.cancel()
         listener = nil
+        // Terminate this session's streams so the server's for-await exits.
+        // start() will spin up fresh streams.
+        frameContinuation?.finish()
+        errorContinuation?.finish()
+        frameContinuation = nil
+        errorContinuation = nil
     }
 
     // MARK: - Connection handling
@@ -119,7 +127,7 @@ public final class TCPListener: PacketListener {
             guard let self else { return }
             switch state {
             case .failed(let error):
-                self.errorContinuation.yield(error)
+                self.errorContinuation?.yield(error)
                 if self.activeConnection === connection {
                     self.activeConnection = nil
                 }
@@ -145,7 +153,7 @@ public final class TCPListener: PacketListener {
             guard let self else { return }
 
             if let error {
-                self.errorContinuation.yield(error)
+                self.errorContinuation?.yield(error)
             }
 
             if let data, !data.isEmpty {
@@ -198,7 +206,7 @@ public final class TCPListener: PacketListener {
                 // wire protocol so the receiver can skip unknown frames instead
                 // of discarding the entire buffer. See transport.md R12–R14 for
                 // the planned protocol revision.
-                errorContinuation.yield(ProtocolError.unknownType(got: eventType))
+                errorContinuation?.yield(ProtocolError.unknownType(got: eventType))
                 buffer.removeAll()
                 return
             }
@@ -211,9 +219,9 @@ public final class TCPListener: PacketListener {
 
             do {
                 let frame = try BinaryStylusCodec.decode(frameData)
-                frameContinuation.yield(frame)
+                frameContinuation?.yield(frame)
             } catch {
-                errorContinuation.yield(error)
+                errorContinuation?.yield(error)
             }
         }
     }

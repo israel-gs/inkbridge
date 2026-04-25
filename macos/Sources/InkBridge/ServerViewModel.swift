@@ -133,6 +133,14 @@ final class ServerViewModel: ObservableObject {
         server.stop()
     }
 
+    /// Start the server manually. Only meaningful when state is `.idle` and
+    /// Accessibility is granted; otherwise it's a no-op (start would fail or
+    /// the user must grant permission first).
+    func startServer() {
+        guard isTrusted else { return }
+        server.start(port: port)
+    }
+
     // MARK: - Permission polling (≤2 second interval per macos-injection.md R1)
 
     private func startPermissionPolling() {
