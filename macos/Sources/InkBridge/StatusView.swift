@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 import InkBridgeCore
 
 /// Server status window displayed when Accessibility permission is granted.
@@ -9,6 +10,7 @@ struct StatusView: View {
 
     @ObservedObject var viewModel: ServerViewModel
     @State private var showingHelp = false
+    @State private var showingSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -23,6 +25,13 @@ struct StatusView: View {
             // Stats grid
             statsSection
 
+            // Latency histogram (only mounted when toggle is on; when off the
+            // Chart isn't created at all, so it consumes zero MainActor time).
+            if viewModel.showLatencyChart {
+                Divider()
+                latencySection
+            }
+
             Divider()
 
             // Footer
@@ -32,6 +41,17 @@ struct StatusView: View {
                     .foregroundStyle(.secondary)
 
                 Spacer()
+
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .help("Settings")
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showingSettings) {
+                    SettingsSheet(viewModel: viewModel)
+                }
 
                 Button {
                     showingHelp = true
@@ -64,6 +84,57 @@ struct StatusView: View {
         }
         .padding(24)
         .frame(minWidth: 320, minHeight: 240)
+    }
+
+    // MARK: - Latency
+
+    private var latencySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                Text("Latency")
+                    .font(.headline)
+                Spacer()
+                latencyMetric(label: "p50", ms: viewModel.latency.arrivalToInjectP50Ms)
+                latencyMetric(label: "p95", ms: viewModel.latency.arrivalToInjectP95Ms)
+                latencyMetric(label: "p99", ms: viewModel.latency.arrivalToInjectP99Ms)
+            }
+
+            if viewModel.latency.samples == 0 {
+                Text("No samples yet — draw something to populate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .center)
+            } else {
+                let bins = latencyHistogram(
+                    samples: viewModel.latency.arrivalToInjectSamplesNs,
+                    buckets: 12
+                )
+                Chart(bins, id: \.midpointMs) { bin in
+                    BarMark(
+                        x: .value("ms", bin.midpointMs),
+                        y: .value("count", bin.count)
+                    )
+                    .foregroundStyle(.cyan)
+                }
+                .frame(height: 80)
+                .chartYAxis(.hidden)
+            }
+
+            Text("Mac-internal arrival → inject latency. Cross-device clock skew not shown.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func latencyMetric(label: String, ms: Double) -> some View {
+        VStack(spacing: 0) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(String(format: "%.1f", ms))
+                .font(.body.monospacedDigit())
+                .foregroundStyle(.primary)
+        }
     }
 
     // MARK: - Sub-views
@@ -159,6 +230,46 @@ struct StatusView: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
+    }
+}
+
+// MARK: - Settings sheet
+
+private struct SettingsSheet: View {
+    @ObservedObject var viewModel: ServerViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Settings")
+                .font(.headline)
+
+            Toggle(isOn: $viewModel.smoothingEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Position smoothing")
+                    Text("One-Euro filter on stylus X/Y. Reduces jitter in hover and at low pressure.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Toggle(isOn: $viewModel.showLatencyChart) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Show latency chart")
+                    Text("Live histogram of arrival → inject time (Mac-internal).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button("Done") { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(24)
+        .frame(width: 380, height: 240)
     }
 }
 

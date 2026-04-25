@@ -22,6 +22,17 @@ public final class InkBridgeServer: ObservableObject {
     // MARK: - Private latency tracker
 
     private var latencyTracker = LatencyTracker()
+
+    // MARK: - Smoothing
+
+    /// Per-axis One-Euro filters applied to STYLUS_MOVE coordinates before
+    /// `CoordinateMapper`. Off by default at process start; flipped on by the
+    /// ViewModel after reading user preferences.
+    private var filterX = OneEuroFilter()
+    private var filterY = OneEuroFilter()
+    /// When false, MOVE frames bypass the filters entirely — no allocation,
+    /// no ns-conversion, no syscall. Toggle via `setSmoothingEnabled`.
+    private var smoothingEnabled: Bool = true
     /// Throttle `latency` snapshot publishing. snapshot() sorts the whole ring
     /// buffer, and @Published triggers SwiftUI updates — doing this on every
     /// frame at 240 Hz chews MainActor time and kills the injection hot path.
@@ -132,6 +143,17 @@ public final class InkBridgeServer: ObservableObject {
         }
     }
 
+    /// Toggle position smoothing on or off. When transitioning from off to on
+    /// the filters MUST be reset so the next stroke does not start lagging
+    /// against stale velocity estimates.
+    public func setSmoothingEnabled(_ enabled: Bool) {
+        if enabled && !smoothingEnabled {
+            filterX.reset()
+            filterY.reset()
+        }
+        smoothingEnabled = enabled
+    }
+
     /// Stop both listeners and cancel all tasks.
     public func stop() {
         udpListener.stop()
@@ -209,11 +231,22 @@ public final class InkBridgeServer: ObservableObject {
             break
         }
 
+        // PROXIMITY entering=true resets the smoothing filters so a fresh
+        // stylus session starts without lag from the previous one.
+        if case let .proximity(entering) = event, entering {
+            filterX.reset()
+            filterY.reset()
+        }
+
         // MOVE frames carry coordinates; BUTTON and PROXIMITY reuse the last known
         // position so a click lands where the stylus currently is, not at (0,0).
         let point: CGPoint
-        if case let .move(x, y, _, _, _) = event {
-            let sample = makeSample(frame: frame, x: x, y: y)
+        if case let .move(rawX, rawY, _, _, _) = event {
+            let (sx, sy): (Float, Float) = smoothingEnabled
+                ? (filterX.filter(rawX, timestampNs: arrivalNs),
+                   filterY.filter(rawY, timestampNs: arrivalNs))
+                : (rawX, rawY)
+            let sample = makeSample(frame: frame, x: sx, y: sy)
             point = CoordinateMapper.map(sample: sample, display: displayRect)
             lastPoint = point
         } else {

@@ -20,6 +20,24 @@ final class ServerViewModel: ObservableObject {
     @Published private(set) var isTrusted: Bool = false
     @Published private(set) var tunnelState: UsbTunnelState = .idle
 
+    /// Position smoothing on/off. Persisted across launches.
+    @Published var smoothingEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(smoothingEnabled, forKey: Self.smoothingKey)
+            server.setSmoothingEnabled(smoothingEnabled)
+        }
+    }
+
+    /// Show the live latency histogram in StatusView. Persisted across launches.
+    @Published var showLatencyChart: Bool = false {
+        didSet {
+            UserDefaults.standard.set(showLatencyChart, forKey: Self.histogramKey)
+        }
+    }
+
+    private static let smoothingKey = "signalq.smoothing"
+    private static let histogramKey = "signalq.histogram"
+
     // MARK: - Private
 
     private let server: InkBridgeServer
@@ -41,6 +59,15 @@ final class ServerViewModel: ObservableObject {
         self.injector = injector
         self.server = InkBridgeServer(injector: injector)
         self.isTrusted = injector.isTrusted
+
+        // Load persisted signal-quality preferences. UserDefaults returns false
+        // for an unset Bool, so smoothing defaults to true via explicit fallback.
+        let defaults = UserDefaults.standard
+        let smoothingDefault = defaults.object(forKey: Self.smoothingKey) as? Bool ?? true
+        self.smoothingEnabled = smoothingDefault
+        self.showLatencyChart = defaults.bool(forKey: Self.histogramKey)
+        // Apply current preference to the server now that both are constructed.
+        self.server.setSmoothingEnabled(smoothingDefault)
 
         let adbPath = AdbDiscovery.findAdb()
         let runner: AdbRunner? = adbPath.map { ProcessAdbRunner(adbPath: $0) }

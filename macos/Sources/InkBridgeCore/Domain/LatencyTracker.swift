@@ -70,13 +70,22 @@ public struct LatencyTracker {
         /// Mean `injectNs − arrivalNs` (Mac-internal, RELIABLE) in milliseconds.
         public let arrivalToInjectMeanMs: Double
 
+        /// Raw arrival-to-inject samples (ns) currently in the ring buffer.
+        /// Length `≤ LatencyTracker.capacity`. Order is unspecified (the ring
+        /// may have wrapped) but bucketing is order-independent.
+        ///
+        /// Exposed so the UI can render a histogram via `latencyHistogram`
+        /// without needing to plumb the entire tracker.
+        public let arrivalToInjectSamplesNs: [Double]
+
         /// A snapshot with all-zero values, used as a placeholder before any samples arrive.
         public static let zero = Snapshot(
             samples: 0,
             wireToArrivalP50Ms: 0, wireToArrivalP95Ms: 0, wireToArrivalP99Ms: 0,
             arrivalToInjectP50Ms: 0, arrivalToInjectP95Ms: 0, arrivalToInjectP99Ms: 0,
             totalP50Ms: 0, totalP95Ms: 0, totalP99Ms: 0,
-            arrivalToInjectMeanMs: 0
+            arrivalToInjectMeanMs: 0,
+            arrivalToInjectSamplesNs: []
         )
     }
 
@@ -153,7 +162,8 @@ public struct LatencyTracker {
             totalP50Ms:             tot.p50 / 1_000_000,
             totalP95Ms:             tot.p95 / 1_000_000,
             totalP99Ms:             tot.p99 / 1_000_000,
-            arrivalToInjectMeanMs:  mean    / 1_000_000
+            arrivalToInjectMeanMs:  mean    / 1_000_000,
+            arrivalToInjectSamplesNs: Array(arrivalToInjectNs.prefix(count))
         )
     }
 
