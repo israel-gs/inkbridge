@@ -211,11 +211,16 @@ public final class InkBridgeServer: ObservableObject {
             return
 
         case let .key(keyCode, modifiers, action):
+            NSLog("[InkBridge.Key] received keyCode=0x%02x mods=0x%02x action=%@",
+                  keyCode, modifiers, "\(action)")
             do {
                 try injector.injectKey(keyCode: keyCode, modifiers: modifiers, action: action)
+                NSLog("[InkBridge.Key] injectKey returned OK")
             } catch InjectorError.notTrusted {
+                NSLog("[InkBridge.Key] injectKey threw notTrusted")
                 state = .degraded(reason: "Accessibility permission required")
             } catch {
+                NSLog("[InkBridge.Key] injectKey threw \(error)")
                 stats.injectionFailures += 1
             }
             recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)

@@ -40,6 +40,14 @@ public final class CGEventInjector: Injector {
     private let eventSource: CGEventSource?
     private var proximityEntered = false
 
+    /// Modifiers currently asserted by held express-key buttons. Synthetic
+    /// `flagsChanged` events posted to `cgSessionEventTap` do NOT update the
+    /// system's canonical modifier state, so subsequent events we inject
+    /// (mouse, scroll, keystrokes) would have flags=0 even while the user is
+    /// holding e.g. Ctrl on the bar. We track the state ourselves and merge
+    /// it into every event we post.
+    private var heldModifiers: CGEventFlags = []
+
     /// Tracks click state for double/triple-click recognition.
     /// macOS counts consecutive clicks within ~500ms as multi-clicks; the
     /// CGEvent's mouseEventClickState field carries the count (1, 2, 3...).
@@ -144,6 +152,10 @@ public final class CGEventInjector: Injector {
         if let contField = CGEventField(rawValue: 88) {
             scrollEvent.setIntegerValueField(contField, value: 1)
         }
+        // Apply any modifier currently held on the express-key bar so that e.g.
+        // Ctrl-hold + scroll = zoom in apps that listen for Ctrl+scroll
+        // (Excalidraw, Chrome, Safari, Krita, Affinity).
+        scrollEvent.flags = heldModifiers
         scrollEvent.post(tap: .cgSessionEventTap)
     }
 
@@ -259,6 +271,7 @@ public final class CGEventInjector: Injector {
         ) else {
             throw InjectorError.eventCreationFailed
         }
+        moveEvent.flags = heldModifiers
         moveEvent.post(tap: .cgSessionEventTap)
     }
 
@@ -276,41 +289,53 @@ public final class CGEventInjector: Injector {
 
         let cgFlags = Self.cgFlags(forModifierBitfield: modifiers)
 
-        // Modifier-only event (no virtual keycode) — emit flagsChanged.
+        // Modifier-only event (no virtual keycode) — emit flagsChanged AND
+        // record/clear held state so subsequent injected events carry the
+        // modifier flags too.
         if keyCode == 0 {
-            guard let event = CGEvent(source: eventSource) else {
-                throw InjectorError.eventCreationFailed
-            }
-            event.type = .flagsChanged
             switch action {
-            case .press:           event.flags = cgFlags
-            case .release:         event.flags = []
+            case .press:
+                heldModifiers.formUnion(cgFlags)
+            case .release:
+                heldModifiers.subtract(cgFlags)
             case .tap:
-                // A "tap" of a modifier is meaningless on its own — emit it as
-                // a press immediately followed by a release so accidental taps
-                // don't leave the modifier latched.
-                event.flags = cgFlags
-                event.post(tap: .cgSessionEventTap)
-                guard let release = CGEvent(source: eventSource) else { return }
-                release.type = .flagsChanged
-                release.flags = []
-                release.post(tap: .cgSessionEventTap)
+                // A "tap" of a modifier is rarely useful but we honour it as
+                // a brief press+release cycle so the held state doesn't latch.
+                let pressed = mergedFlags(with: cgFlags)
+                postFlagsChanged(flags: pressed)
+                postFlagsChanged(flags: heldModifiers)
                 return
             }
-            event.post(tap: .cgSessionEventTap)
+            postFlagsChanged(flags: heldModifiers)
             return
         }
 
-        // Regular keyboard event.
+        // Regular keyboard event — merge any currently-held modifiers with the
+        // shortcut's own modifiers so e.g. holding Shift on the bar + tapping
+        // a Cmd+Z slot fires Cmd+Shift+Z.
+        let merged = mergedFlags(with: cgFlags)
         switch action {
         case .press:
-            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true, flags: cgFlags)
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true, flags: merged)
         case .release:
-            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: cgFlags)
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: merged)
         case .tap:
-            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true,  flags: cgFlags)
-            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: cgFlags)
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: true,  flags: merged)
+            try postKey(virtualKey: CGKeyCode(keyCode), keyDown: false, flags: merged)
         }
+    }
+
+    /// Merges the per-event flags with any currently-held modifier flags.
+    private func mergedFlags(with base: CGEventFlags) -> CGEventFlags {
+        return base.union(heldModifiers)
+    }
+
+    /// Posts a flagsChanged event with the given absolute flag state.
+    private func postFlagsChanged(flags: CGEventFlags) {
+        guard let event = CGEvent(source: eventSource) else { return }
+        event.type = .flagsChanged
+        event.flags = flags
+        event.post(tap: .cgSessionEventTap)
     }
 
     /// Translates the wire-format modifier bitfield (Cmd=1, Ctrl=2, Opt=4,
@@ -540,6 +565,10 @@ public final class CGEventInjector: Injector {
             cgEvent.setDoubleValueField(.tabletEventRotation, value: 0)
         }
 
+        // Carry held modifier flags from the express-key bar onto every
+        // tablet-subtyped mouse event (so Ctrl-held + click = Ctrl-click =
+        // right-click, Shift-held + drag = constrained line, etc).
+        cgEvent.flags = heldModifiers
         cgEvent.post(tap: .cgSessionEventTap)
     }
 

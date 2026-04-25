@@ -194,6 +194,7 @@ public final class TCPListener: PacketListener {
             case 0x04: payloadSize = 4    // STYLUS_SCROLL (R12)
             case 0x05: payloadSize = 4    // STYLUS_ZOOM (R13)
             case 0x06: payloadSize = 4    // CURSOR_DELTA
+            case 0x07: payloadSize = 4    // KEY_EVENT (express keys)
             default:
                 // Unknown type — cannot determine payload size, so the entire buffer
                 // must be discarded. This is a known limitation: without a

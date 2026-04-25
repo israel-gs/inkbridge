@@ -215,12 +215,21 @@ class ConnectionViewModel(
             is com.inkbridge.domain.model.ExpressKeyAction.ModifierHold ->
                 action.keyCode to action.modifiers
         }
+        val state = connectionState.value
+        android.util.Log.i(
+            "InkBridge.ExpressKey",
+            "onExpressKey wire=$wireAction keyCode=0x${keyCode.toString(16)} mods=0x${modifiers.toString(16)} connState=$state",
+        )
         viewModelScope.launch {
             streamStylus.emitKey(
                 keyCode = keyCode,
                 modifiers = modifiers,
                 action = wireAction,
                 timestampNs = System.nanoTime(),
+            )
+            android.util.Log.i(
+                "InkBridge.ExpressKey",
+                "emitKey returned (sent=${streamStylus.sentCount.value} dropped=${streamStylus.droppedCount.value})",
             )
         }
     }
@@ -561,18 +570,25 @@ class ConnectionViewModel(
         event: android.view.MotionEvent,
         viewWidth: Int,
         viewHeight: Int,
+        indices: IntArray = intArrayOf(0, 1),
     ) {
         if (connectionState.value !is ConnectionState.Connected) return
         // Mute the trackpad path. When one of the two fingers lifts mid-gesture,
         // the resulting solo-finger MOVE frames must NOT move the cursor.
         trackpadActive = false
 
-        val cx = (event.getX(0) + event.getX(1)) / 2f
-        val cy = (event.getY(0) + event.getY(1)) / 2f
+        // `indices` lists the in-bounds finger pointer indices computed by the
+        // CaptureSurface (so we ignore any sibling-view pointer like an express
+        // key the user is holding). Fall back to (0, 1) for safety.
+        val i0 = indices.getOrNull(0) ?: 0
+        val i1 = indices.getOrNull(1) ?: 1
+
+        val cx = (event.getX(i0) + event.getX(i1)) / 2f
+        val cy = (event.getY(i0) + event.getY(i1)) / 2f
         val centroid = Offset(cx, cy)
 
-        val dx = event.getX(1) - event.getX(0)
-        val dy = event.getY(1) - event.getY(0)
+        val dx = event.getX(i1) - event.getX(i0)
+        val dy = event.getY(i1) - event.getY(i0)
 
         val eventTimeMs = event.eventTime
 
@@ -682,11 +698,15 @@ class ConnectionViewModel(
         event: android.view.MotionEvent,
         viewWidth: Int,
         viewHeight: Int,
+        indices: IntArray = intArrayOf(0),
     ) {
         if (connectionState.value !is ConnectionState.Connected) return
 
-        val x = event.getX(0)
-        val y = event.getY(0)
+        // Use the first in-bounds finger pointer. CaptureSurface filters out
+        // any pointer that lives on a sibling view (e.g. express-key bar).
+        val i = indices.getOrNull(0) ?: 0
+        val x = event.getX(i)
+        val y = event.getY(i)
         val now = event.eventTime
         val timestampNs = System.nanoTime()
 

@@ -159,11 +159,11 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
                 onMotionEvent = { event, width, height ->
                     viewModel.onMotion(event, width, height)
                 },
-                onGestureEvent = { event, width, height ->
-                    viewModel.onGestureEvent(event, width, height)
+                onGestureEvent = { event, width, height, indices ->
+                    viewModel.onGestureEvent(event, width, height, indices)
                 },
-                onTrackpadEvent = { event, width, height ->
-                    viewModel.onTrackpadEvent(event, width, height)
+                onTrackpadEvent = { event, width, height, indices ->
+                    viewModel.onTrackpadEvent(event, width, height, indices)
                 },
                 naturalScroll = naturalScroll,
                 onSetNaturalScroll = { viewModel.setNaturalScroll(it) },

@@ -80,8 +80,8 @@ private data class FingerPointer(
 fun CaptureSurface(
     connectionState: ConnectionState,
     onMotionEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit,
-    onGestureEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
-    onTrackpadEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
+    onGestureEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int, indices: IntArray) -> Unit = { _, _, _, _ -> },
+    onTrackpadEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int, indices: IntArray) -> Unit = { _, _, _, _ -> },
     clickFlashes: kotlinx.coroutines.flow.SharedFlow<Offset>? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -154,16 +154,46 @@ fun CaptureSurface(
                 .pointerInteropFilter { event ->
                     if (!isActive) return@pointerInteropFilter false
 
-                    // Count pointers by category. STYLUS + ERASER → stylus side.
-                    // Everything else (FINGER, UNKNOWN, MOUSE) → finger side.
+                    // pointerInteropFilter is a legacy-View bridge: when ANY
+                    // pointer hits the canvas region, it receives the FULL
+                    // MotionEvent including pointers whose down location was
+                    // on a sibling view (e.g. the express-key bar). Those
+                    // pointers' X coordinates are translated to canvas-local
+                    // space and may be > viewWidth (right-edge bar) or < 0
+                    // (left-edge bar). We must filter them out before
+                    // counting fingers, otherwise holding a modifier key on
+                    // the bar inflates pointerCount and breaks the routing.
                     var stylusCount = 0
+                    val fingerIndices = mutableListOf<Int>()
+                    val w = viewWidth.toFloat()
+                    val h = viewHeight.toFloat()
                     for (i in 0 until event.pointerCount) {
+                        val x = event.getX(i)
+                        val y = event.getY(i)
+                        val inBounds = x >= 0f && x < w && y >= 0f && y < h
+                        if (!inBounds) continue
                         val t = event.getToolType(i)
                         if (t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER) {
                             stylusCount++
+                        } else {
+                            fingerIndices.add(i)
                         }
                     }
-                    val fingerCount = event.pointerCount - stylusCount
+                    val fingerCount = fingerIndices.size
+
+                    // If the action that triggered this dispatch corresponds to
+                    // an out-of-bounds pointer (POINTER_DOWN/UP on the bar), do
+                    // not consume — let the gesture system continue routing.
+                    val actionIdx = when (event.actionMasked) {
+                        MotionEvent.ACTION_POINTER_DOWN,
+                        MotionEvent.ACTION_POINTER_UP,
+                        -> event.actionIndex
+                        else -> -1
+                    }
+                    if (actionIdx >= 0 && actionIdx !in fingerIndices && stylusCount == 0) {
+                        // Bar finger transition — ignore.
+                        return@pointerInteropFilter false
+                    }
 
                     // Routing:
                     // - 1 stylus alone → existing stylus path (preserves S Pen fidelity).
@@ -234,10 +264,11 @@ fun CaptureSurface(
 
                             fingerPointers = updated
 
+                            val indicesArray = fingerIndices.toIntArray()
                             if (fingerCount == 2) {
-                                onGestureEvent(event, viewWidth, viewHeight)
+                                onGestureEvent(event, viewWidth, viewHeight, indicesArray)
                             } else {
-                                onTrackpadEvent(event, viewWidth, viewHeight)
+                                onTrackpadEvent(event, viewWidth, viewHeight, indicesArray)
                             }
                             showFeedback = false
                         }
