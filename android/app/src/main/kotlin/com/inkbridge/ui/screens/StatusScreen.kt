@@ -112,6 +112,13 @@ fun StatusScreen(
         com.inkbridge.domain.model.ExpressKeyAction,
         com.inkbridge.protocol.KeyAction,
     ) -> Unit = { _, _ -> },
+    profiles: List<com.inkbridge.domain.model.ExpressKeyProfile> = emptyList(),
+    activeProfileId: String = "",
+    onSelectProfile: (String) -> Unit = {},
+    onCreateProfile: (String) -> Unit = {},
+    onRenameProfile: (String, String) -> Unit = { _, _ -> },
+    onDeleteProfile: (String) -> Unit = {},
+    onUpdateSlot: (Int, com.inkbridge.domain.model.ExpressKeyAction, String) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -216,6 +223,13 @@ fun StatusScreen(
                 onExpressKeysEnabledChange = onSetExpressKeysEnabled,
                 expressKeysEdge = expressKeysEdge,
                 onExpressKeysEdgeChange = onSetExpressKeysEdge,
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                onSelectProfile = onSelectProfile,
+                onCreateProfile = onCreateProfile,
+                onRenameProfile = onRenameProfile,
+                onDeleteProfile = onDeleteProfile,
+                onUpdateSlot = onUpdateSlot,
             )
         }
     }
@@ -430,6 +444,13 @@ private fun SettingsSheet(
     expressKeysEdge: com.inkbridge.domain.model.ExpressKeysEdge =
         com.inkbridge.domain.model.ExpressKeysEdge.RIGHT,
     onExpressKeysEdgeChange: (com.inkbridge.domain.model.ExpressKeysEdge) -> Unit = {},
+    profiles: List<com.inkbridge.domain.model.ExpressKeyProfile> = emptyList(),
+    activeProfileId: String = "",
+    onSelectProfile: (String) -> Unit = {},
+    onCreateProfile: (String) -> Unit = {},
+    onRenameProfile: (String, String) -> Unit = { _, _ -> },
+    onDeleteProfile: (String) -> Unit = {},
+    onUpdateSlot: (Int, com.inkbridge.domain.model.ExpressKeyAction, String) -> Unit = { _, _, _ -> },
 ) {
     Column(
         modifier =
@@ -566,7 +587,7 @@ private fun SettingsSheet(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 4.dp, bottom = 12.dp),
+                        .padding(start = 4.dp, bottom = 8.dp),
             ) {
                 Text(
                     text = "Side",
@@ -588,12 +609,22 @@ private fun SettingsSheet(
                     },
                 )
             }
+
+            ExpressKeyProfileSection(
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                onSelectProfile = onSelectProfile,
+                onCreateProfile = onCreateProfile,
+                onRenameProfile = onRenameProfile,
+                onDeleteProfile = onDeleteProfile,
+                onUpdateSlot = onUpdateSlot,
+            )
         }
     }
 }
 
 @Composable
-private fun EdgeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun EdgeChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val cyan = androidx.compose.ui.graphics.Color(0xFF00C8FF)
     androidx.compose.material3.Surface(
         onClick = onClick,

@@ -1,8 +1,11 @@
 package com.inkbridge.data.settings
 
 import android.content.SharedPreferences
+import com.inkbridge.domain.model.DefaultExpressKeys
+import com.inkbridge.domain.model.ExpressKeyProfile
 import com.inkbridge.domain.model.ExpressKeysEdge
 import com.inkbridge.domain.model.TransportKind
+import java.util.UUID
 
 /**
  * Synchronous settings repository backed by [SharedPreferences].
@@ -29,6 +32,9 @@ class SettingsRepository(private val prefs: SharedPreferences) {
         const val KEY_CLICK_FLASH = "pref_click_flash"
         const val KEY_EXPRESS_KEYS_ENABLED = "pref_express_keys_enabled"
         const val KEY_EXPRESS_KEYS_EDGE = "pref_express_keys_edge"
+        const val KEY_EXPRESS_KEY_PROFILES = "pref_express_key_profiles"
+        const val KEY_EXPRESS_KEY_ACTIVE_PROFILE = "pref_express_key_active_profile"
+        const val DEFAULT_PROFILE_NAME = "Default"
     }
 
     /**
@@ -121,4 +127,40 @@ class SettingsRepository(private val prefs: SharedPreferences) {
             return ExpressKeysEdge.entries.getOrNull(ord) ?: ExpressKeysEdge.RIGHT
         }
         set(value) = prefs.edit().putInt(KEY_EXPRESS_KEYS_EDGE, value.ordinal).apply()
+
+    // ── Express-key profiles ─────────────────────────────────────────────────
+
+    /**
+     * All express-key profiles. Always at least one ("Default" with the
+     * factory preset) — the getter seeds it on first access if empty.
+     */
+    fun loadExpressKeyProfiles(): List<ExpressKeyProfile> {
+        val raw = prefs.getString(KEY_EXPRESS_KEY_PROFILES, null)
+        val parsed = ExpressKeyProfileJson.decodeProfiles(raw)
+        if (parsed.isNotEmpty()) return parsed
+        // Seed the factory default on first access.
+        val seeded = listOf(
+            ExpressKeyProfile(
+                id = UUID.randomUUID().toString(),
+                name = DEFAULT_PROFILE_NAME,
+                keys = DefaultExpressKeys,
+            ),
+        )
+        saveExpressKeyProfiles(seeded)
+        return seeded
+    }
+
+    fun saveExpressKeyProfiles(profiles: List<ExpressKeyProfile>) {
+        val json = ExpressKeyProfileJson.encodeProfiles(profiles)
+        prefs.edit().putString(KEY_EXPRESS_KEY_PROFILES, json).apply()
+    }
+
+    /**
+     * The id of the profile currently active. Falls back to the first
+     * profile if the stored id no longer exists (e.g. after a profile was
+     * deleted on another device).
+     */
+    var expressKeyActiveProfileId: String?
+        get() = prefs.getString(KEY_EXPRESS_KEY_ACTIVE_PROFILE, null)
+        set(value) = prefs.edit().putString(KEY_EXPRESS_KEY_ACTIVE_PROFILE, value).apply()
 }

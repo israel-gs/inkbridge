@@ -196,9 +196,94 @@ class ConnectionViewModel(
         _expressKeysEdge.value = edge
     }
 
-    /** Default 6-slot preset. Editing UI is deferred — config is fixed for now. */
-    val expressKeys: List<com.inkbridge.domain.model.ExpressKey> =
-        com.inkbridge.domain.model.DefaultExpressKeys
+    // ── Express-key profiles ───────────────────────────────────────────────────
+
+    private val _profiles = MutableStateFlow(settings.loadExpressKeyProfiles())
+    /** All available profiles. Always non-empty (Default seeded on first run). */
+    val profiles: StateFlow<List<com.inkbridge.domain.model.ExpressKeyProfile>> =
+        _profiles.asStateFlow()
+
+    private val _activeProfileId = MutableStateFlow(
+        settings.expressKeyActiveProfileId ?: settings.loadExpressKeyProfiles().first().id,
+    )
+    /** Id of the profile currently driving the express-key bar. */
+    val activeProfileId: StateFlow<String> = _activeProfileId.asStateFlow()
+
+    /**
+     * The 6 keys of the active profile. Updates whenever the user switches
+     * profile or edits a slot. Computed lazily from [_profiles] + [_activeProfileId]
+     * via collect chain in InkBridgeApp / StatusScreen.
+     */
+    val expressKeys: StateFlow<List<com.inkbridge.domain.model.ExpressKey>> =
+        kotlinx.coroutines.flow.combine(_profiles, _activeProfileId) { profiles, activeId ->
+            (profiles.firstOrNull { it.id == activeId } ?: profiles.first()).keys
+        }.stateIn(
+            scope = viewModelScope,
+            started = kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            initialValue = (
+                _profiles.value.firstOrNull { it.id == _activeProfileId.value }
+                    ?: _profiles.value.first()
+            ).keys,
+        )
+
+    fun setActiveProfile(profileId: String) {
+        if (_profiles.value.none { it.id == profileId }) return
+        _activeProfileId.value = profileId
+        settings.expressKeyActiveProfileId = profileId
+    }
+
+    fun createProfile(name: String, copyFrom: com.inkbridge.domain.model.ExpressKeyProfile? = null): String {
+        val source = copyFrom ?: _profiles.value.first { it.id == _activeProfileId.value }
+        val newProfile = com.inkbridge.domain.model.ExpressKeyProfile(
+            id = java.util.UUID.randomUUID().toString(),
+            name = name,
+            keys = source.keys,
+        )
+        val updated = _profiles.value + newProfile
+        _profiles.value = updated
+        settings.saveExpressKeyProfiles(updated)
+        setActiveProfile(newProfile.id)
+        return newProfile.id
+    }
+
+    fun renameProfile(profileId: String, newName: String) {
+        val updated = _profiles.value.map {
+            if (it.id == profileId) it.copy(name = newName) else it
+        }
+        _profiles.value = updated
+        settings.saveExpressKeyProfiles(updated)
+    }
+
+    /** Deletes a profile if it is not the only one. Returns true on success. */
+    fun deleteProfile(profileId: String): Boolean {
+        if (_profiles.value.size <= 1) return false
+        val remaining = _profiles.value.filter { it.id != profileId }
+        _profiles.value = remaining
+        settings.saveExpressKeyProfiles(remaining)
+        if (_activeProfileId.value == profileId) {
+            setActiveProfile(remaining.first().id)
+        }
+        return true
+    }
+
+    /** Updates the action + label of a single slot in the active profile. */
+    fun updateSlot(
+        slotId: Int,
+        newAction: com.inkbridge.domain.model.ExpressKeyAction,
+        newLabel: String,
+    ) {
+        val activeId = _activeProfileId.value
+        val updated = _profiles.value.map { profile ->
+            if (profile.id != activeId) return@map profile
+            profile.copy(
+                keys = profile.keys.map { key ->
+                    if (key.id == slotId) key.copy(label = newLabel, action = newAction) else key
+                },
+            )
+        }
+        _profiles.value = updated
+        settings.saveExpressKeyProfiles(updated)
+    }
 
     /**
      * Called by the express-key bar when a key is tapped (Shortcut action) or

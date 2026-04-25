@@ -94,4 +94,27 @@ enum class ExpressKeysEdge {
     LEFT, RIGHT;
 }
 
-private infix fun UByte.or(other: UByte): UByte = (this.toInt() or other.toInt()).toUByte()
+/**
+ * A user-named bundle of 6 express keys. The user can have any number of
+ * profiles and switch between them manually from settings (e.g. "Default",
+ * "Krita", "Excalidraw").
+ *
+ * @property id    Stable UUID — never reused. Persisted across renames.
+ * @property name  Human-readable label shown in the picker.
+ * @property keys  Exactly 6 entries; the bar always renders 6 slots.
+ */
+data class ExpressKeyProfile(
+    val id: String,
+    val name: String,
+    val keys: List<ExpressKey>,
+) {
+    companion object {
+        const val SLOT_COUNT = 6
+    }
+
+    init {
+        require(keys.size == SLOT_COUNT) { "ExpressKeyProfile must have exactly $SLOT_COUNT keys, got ${keys.size}" }
+    }
+}
+
+infix fun UByte.or(other: UByte): UByte = (this.toInt() or other.toInt()).toUByte()
