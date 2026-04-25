@@ -254,7 +254,13 @@ public final class CGEventInjector: Injector {
     public var cursorAcceleration: Float = 1.6
 
     public func injectCursorDelta(deltaX: Int16, deltaY: Int16) throws {
-        // Read current cursor position, add scaled delta, post mouseMoved.
+        // Read current cursor position, add scaled delta, post the right mouse
+        // event for the current button state. Native apps (Finder, Photoshop,
+        // Apple stuff in general) reject "drag-select" semantics when the
+        // intermediate events are `mouseMoved` while a button is held down —
+        // they require `leftMouseDragged` / `rightMouseDragged`. Web apps
+        // (Excalidraw etc.) are more permissive but still benefit from the
+        // correct event type for momentum and cursor change detection.
         guard let probe = CGEvent(source: nil) else {
             throw InjectorError.eventCreationFailed
         }
@@ -263,11 +269,21 @@ public final class CGEventInjector: Injector {
         let scaledDy = CGFloat(Float(deltaY) * cursorAcceleration)
         let target = CGPoint(x: current.x + scaledDx, y: current.y + scaledDy)
 
+        let primaryDown = stateLock.withLock { stateMachine.state.primaryDown }
+        let secondaryDown = stateLock.withLock { stateMachine.state.secondaryDown }
+        let mouseType: CGEventType
+        let button: CGMouseButton
+        switch (primaryDown, secondaryDown) {
+        case (true, _):  mouseType = .leftMouseDragged;  button = .left
+        case (_, true):  mouseType = .rightMouseDragged; button = .right
+        default:         mouseType = .mouseMoved;        button = .left
+        }
+
         guard let moveEvent = CGEvent(
             mouseEventSource: eventSource,
-            mouseType: .mouseMoved,
+            mouseType: mouseType,
             mouseCursorPosition: target,
-            mouseButton: .left
+            mouseButton: button
         ) else {
             throw InjectorError.eventCreationFailed
         }

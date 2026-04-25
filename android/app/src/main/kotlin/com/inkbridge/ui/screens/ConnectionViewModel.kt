@@ -446,6 +446,18 @@ class ConnectionViewModel(
     private val trackpadTapMovementThresholdPx: Float = 14f
 
     /**
+     * Double-tap drag (macOS-style). On the second consecutive ACTION_DOWN
+     * within [doubleTapDragWindowMs] of the previous tap-up, we enter a
+     * drag session: BUTTON_DOWN is emitted immediately, every subsequent
+     * MOVE emits cursorDelta with the primary held, and ACTION_UP emits
+     * BUTTON_UP. This is how Mac trackpads do "Tap to click + Double tap
+     * to drag" → drag-select for free.
+     */
+    @Volatile private var lastTapEndTimeMs: Long = 0L
+    @Volatile private var dragSessionActive: Boolean = false
+    private val doubleTapDragWindowMs: Long = 350L
+
+    /**
      * Guard window at the start of a fresh 1-finger session: suppress cursor
      * deltas until the user clearly intends to drive the trackpad (movement
      * threshold OR time elapsed). Filters tiny twitches before a 2-finger
@@ -837,6 +849,26 @@ class ConnectionViewModel(
                 trackpadDownTimeMs = now
                 trackpadCumMovement = 0f
                 trackpadActive = true
+
+                // Double-tap drag: if this DOWN follows a recent tap closely,
+                // promote the session to a drag — primary held throughout,
+                // every move emits cursorDelta as a mouse-dragged event on
+                // the Mac side.
+                val sinceLastTap = now - lastTapEndTimeMs
+                if (lastTapEndTimeMs != 0L && sinceLastTap <= doubleTapDragWindowMs) {
+                    dragSessionActive = true
+                    haptic.performTapFeedback()
+                    emitClickFlash(
+                        xNorm = (x / viewWidth.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        yNorm = (y / viewHeight.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
+                    emitChannel.trySend { sink ->
+                        sink.emitButton(primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs)
+                    }
+                    // Consume the recent tap so a third quick down is NOT
+                    // interpreted as another double-tap drag arming.
+                    lastTapEndTimeMs = 0L
+                }
             }
             android.view.MotionEvent.ACTION_MOVE -> {
                 // If we transitioned here from a 2-finger gesture (e.g. one
@@ -850,12 +882,15 @@ class ConnectionViewModel(
                 trackpadPrevX = x
                 trackpadPrevY = y
 
-                // Activation guard at session start.
-                val elapsed = now - trackpadDownTimeMs
-                val activated =
-                    trackpadCumMovement >= trackpadActivateMovementPx ||
-                        elapsed >= trackpadActivateTimeMs
-                if (!activated) return
+                // Activation guard at session start (skip when in drag session
+                // — the user already explicitly armed by double-tapping).
+                if (!dragSessionActive) {
+                    val elapsed = now - trackpadDownTimeMs
+                    val activated =
+                        trackpadCumMovement >= trackpadActivateMovementPx ||
+                            elapsed >= trackpadActivateTimeMs
+                    if (!activated) return
+                }
 
                 if (kotlin.math.abs(dx) >= 1f || kotlin.math.abs(dy) >= 1f) {
                     val clampedDx = dx.coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat()).toInt().toShort()
@@ -866,28 +901,50 @@ class ConnectionViewModel(
                 }
             }
             android.view.MotionEvent.ACTION_UP -> {
-                val elapsed = now - trackpadDownTimeMs
-                val isTap =
-                    trackpadActive &&
-                        elapsed < trackpadTapTimeoutMs &&
-                        trackpadCumMovement < trackpadTapMovementThresholdPx
-                if (isTap) {
-                    // Haptic fires only on a confirmed tap → no buzz on drags.
-                    haptic.performTapFeedback()
-                    // Visual ripple at the tap point.
-                    emitClickFlash(
-                        xNorm = (x / viewWidth.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        yNorm = (y / viewHeight.coerceAtLeast(1)).coerceIn(0f, 1f),
-                    )
+                if (dragSessionActive) {
+                    // Drag session ends — release the primary button.
                     emitChannel.trySend { sink ->
-                        sink.emitButton(primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs)
                         sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
+                    }
+                    dragSessionActive = false
+                    lastTapEndTimeMs = 0L
+                } else {
+                    val elapsed = now - trackpadDownTimeMs
+                    val isTap =
+                        trackpadActive &&
+                            elapsed < trackpadTapTimeoutMs &&
+                            trackpadCumMovement < trackpadTapMovementThresholdPx
+                    if (isTap) {
+                        // Haptic fires only on a confirmed tap → no buzz on drags.
+                        haptic.performTapFeedback()
+                        emitClickFlash(
+                            xNorm = (x / viewWidth.coerceAtLeast(1)).coerceIn(0f, 1f),
+                            yNorm = (y / viewHeight.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        )
+                        emitChannel.trySend { sink ->
+                            sink.emitButton(primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs)
+                            sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
+                        }
+                        // Record the tap-up time so a quick subsequent DOWN
+                        // can promote itself to a drag session.
+                        lastTapEndTimeMs = now
+                    } else {
+                        lastTapEndTimeMs = 0L
                     }
                 }
                 trackpadCumMovement = 0f
                 trackpadActive = false
             }
             android.view.MotionEvent.ACTION_CANCEL -> {
+                if (dragSessionActive) {
+                    // Cancel — release primary so apps don't think the button
+                    // is still held after a stray cancel.
+                    emitChannel.trySend { sink ->
+                        sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
+                    }
+                    dragSessionActive = false
+                }
+                lastTapEndTimeMs = 0L
                 trackpadCumMovement = 0f
                 trackpadActive = false
             }
@@ -896,6 +953,14 @@ class ConnectionViewModel(
                 // valid. Re-seed prevX/Y from finger 0 in case it keeps moving, but
                 // keep trackpadActive = false so ACTION_MOVE is suppressed until a
                 // fresh 1-finger ACTION_DOWN re-arms the session.
+                if (dragSessionActive) {
+                    // The user added a second finger mid-drag. Release the
+                    // primary so the apps see a clean end of selection.
+                    emitChannel.trySend { sink ->
+                        sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
+                    }
+                    dragSessionActive = false
+                }
                 trackpadPrevX = event.getX(0)
                 trackpadPrevY = event.getY(0)
                 trackpadCumMovement = 0f
