@@ -1,8 +1,11 @@
 package com.inkbridge.ui.screens
 
 import android.view.MotionEvent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -22,7 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.tooling.preview.Preview
@@ -34,7 +41,21 @@ import com.inkbridge.ui.theme.CanvasBackground
 import com.inkbridge.ui.theme.CanvasDot
 import com.inkbridge.ui.theme.CanvasDotActive
 import com.inkbridge.ui.theme.CanvasFeedbackGlow
+import com.inkbridge.ui.theme.FingerIndicatorColor
 import com.inkbridge.ui.theme.InkOutline
+
+/**
+ * Per-finger visual indicator state.
+ *
+ * @param id      Android pointer ID — stable across the lifetime of the touch.
+ * @param position Last known screen-space position of this finger.
+ * @param alpha   Animatable alpha (180ms fade-in, 120ms fade-out).
+ */
+private data class FingerPointer(
+    val id: Int,
+    val position: Offset,
+    val alpha: Animatable<Float, *>,
+)
 
 /**
  * Full-bleed capture surface that intercepts stylus and two-finger gesture MotionEvents.
@@ -44,6 +65,7 @@ import com.inkbridge.ui.theme.InkOutline
  * - Subtle dot grid pattern (32dp pitch) — brighter when Connected.
  * - Rounded corners, hairline border that animates on active/inactive.
  * - Cyan radial-glow feedback at current stylus position with pressure scaling.
+ * - Gray-300 hollow ring at each finger position (Feature 4).
  *
  * Active only when [connectionState] is [ConnectionState.Connected] (ui.md R4).
  * No ink rendering — this is a transparent forwarding surface.
@@ -60,6 +82,7 @@ fun CaptureSurface(
     onMotionEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit,
     onGestureEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
     onTrackpadEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
+    clickFlashes: kotlinx.coroutines.flow.SharedFlow<Offset>? = null,
     modifier: Modifier = Modifier,
 ) {
     val isActive = connectionState is ConnectionState.Connected
@@ -76,6 +99,41 @@ fun CaptureSurface(
     var feedbackOffset by remember { mutableStateOf(Offset.Zero) }
     var feedbackPressure by remember { mutableFloatStateOf(0f) }
     var showFeedback by remember { mutableStateOf(false) }
+
+    // Feature 4: per-finger visual indicators (up to 2 fingers).
+    // Key = pointer ID, value = mutable position + alpha state.
+    var fingerPointers by remember { mutableStateOf(mapOf<Int, FingerPointer>()) }
+
+    // Click flash: a short ripple at the click point, driven by the upstream
+    // clickFlashes flow. We hold a single active flash; rapid clicks restart
+    // the animation rather than overlapping.
+    val flashRadius = remember { Animatable(0f) }
+    val flashAlpha = remember { Animatable(0f) }
+    var flashCenter by remember { mutableStateOf(Offset.Zero) }
+    if (clickFlashes != null) {
+        androidx.compose.runtime.LaunchedEffect(clickFlashes) {
+            clickFlashes.collect { norm ->
+                flashCenter = Offset(norm.x * viewWidth, norm.y * viewHeight)
+                // Cancel previous animation if running.
+                flashRadius.snapTo(0f)
+                flashAlpha.snapTo(0.85f)
+                coroutineScope {
+                    launch {
+                        flashRadius.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = 320),
+                        )
+                    }
+                    launch {
+                        flashAlpha.animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(durationMillis = 320),
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     Box(
         modifier =
@@ -128,14 +186,59 @@ fun CaptureSurface(
                                     showFeedback = false
                                 }
                             }
+                            // Stylus engaged — clear any stale finger indicators.
+                            if (fingerPointers.isNotEmpty()) {
+                                fingerPointers = emptyMap()
+                            }
                         }
-                        fingerCount == 2 && stylusCount == 0 -> {
-                            onGestureEvent(event, viewWidth, viewHeight)
-                            showFeedback = false
-                        }
-                        fingerCount == 1 && stylusCount == 0 -> {
-                            // Trackpad mode: drag → cursor delta, quick tap → primary click.
-                            onTrackpadEvent(event, viewWidth, viewHeight)
+                        fingerCount in 1..2 && stylusCount == 0 -> {
+                            // Update finger indicator positions.
+                            val updated = fingerPointers.toMutableMap()
+
+                            when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN,
+                                MotionEvent.ACTION_POINTER_DOWN,
+                                MotionEvent.ACTION_MOVE,
+                                -> {
+                                    // Upsert each active finger pointer.
+                                    for (i in 0 until event.pointerCount) {
+                                        val t = event.getToolType(i)
+                                        if (t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER) continue
+                                        val pid = event.getPointerId(i)
+                                        val pos = Offset(event.getX(i), event.getY(i))
+                                        if (pid in updated) {
+                                            // Update position in-place (Animatable stays).
+                                            updated[pid] = updated[pid]!!.copy(position = pos)
+                                        } else {
+                                            updated[pid] = FingerPointer(
+                                                id = pid,
+                                                position = pos,
+                                                alpha = Animatable(0f),
+                                            )
+                                        }
+                                    }
+                                }
+                                MotionEvent.ACTION_UP,
+                                MotionEvent.ACTION_CANCEL,
+                                -> {
+                                    // All fingers lifted.
+                                    updated.clear()
+                                }
+                                MotionEvent.ACTION_POINTER_UP -> {
+                                    // One finger lifted — remove it.
+                                    val idx = event.actionIndex
+                                    val pid = event.getPointerId(idx)
+                                    updated.remove(pid)
+                                }
+                            }
+
+                            fingerPointers = updated
+
+                            if (fingerCount == 2) {
+                                onGestureEvent(event, viewWidth, viewHeight)
+                            } else {
+                                onTrackpadEvent(event, viewWidth, viewHeight)
+                            }
                             showFeedback = false
                         }
                         else -> return@pointerInteropFilter false
@@ -148,10 +251,45 @@ fun CaptureSurface(
             drawDotGrid(isActive = isActive)
         }
 
+        // Feature 4: finger indicators — animated alpha rings, one per finger.
+        // Z-order: above dot grid, below stylus glow.
+        for ((_, fp) in fingerPointers) {
+            val alphaAnimatable = fp.alpha
+            val pos = fp.position
+
+            // Drive fade-in on appearance, fade-out on removal via LaunchedEffect.
+            LaunchedEffect(fp.id) {
+                alphaAnimatable.animateTo(
+                    targetValue = 0.5f,
+                    animationSpec = tween(durationMillis = 180),
+                )
+            }
+
+            val currentAlpha = alphaAnimatable.value
+            if (currentAlpha > 0f) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawFingerIndicator(pos, currentAlpha)
+                }
+            }
+        }
+
         // Cyan glow feedback — only while a stylus is in contact.
         if (showFeedback && isActive) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 drawFeedbackGlow(feedbackOffset, feedbackPressure)
+            }
+        }
+
+        // Click ripple flash — accent ring that fades while expanding.
+        val currentFlashAlpha = flashAlpha.value
+        val currentFlashProgress = flashRadius.value
+        if (currentFlashAlpha > 0.01f) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawClickFlash(
+                    center = flashCenter,
+                    progress = currentFlashProgress,
+                    alpha = currentFlashAlpha,
+                )
             }
         }
     }
@@ -181,6 +319,37 @@ private fun DrawScope.drawDotGrid(isActive: Boolean) {
         }
         y += pitch
     }
+}
+
+/**
+ * Draws a single finger indicator: hollow ring (32dp outer diameter, 2dp stroke)
+ * with a 4dp filled dot at the centre.
+ *
+ * Color: [FingerIndicatorColor] at [alpha] opacity (0.4–0.6 range during contact).
+ */
+private fun DrawScope.drawFingerIndicator(
+    center: Offset,
+    alpha: Float,
+) {
+    val outerRadius = 16.dp.toPx() // 32dp outer diameter → 16dp radius
+    val strokeWidth = 2.dp.toPx()
+    val dotRadius = 2.dp.toPx() // 4dp filled dot → 2dp radius
+    val color = FingerIndicatorColor.copy(alpha = alpha)
+
+    // Hollow ring.
+    drawCircle(
+        color = color,
+        radius = outerRadius - strokeWidth / 2f,
+        center = center,
+        style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+    )
+
+    // Filled centre dot.
+    drawCircle(
+        color = color,
+        radius = dotRadius,
+        center = center,
+    )
 }
 
 /**
@@ -217,6 +386,40 @@ private fun DrawScope.drawFeedbackGlow(
         radius = pressureRadius * 0.45f,
         center = offset,
     )
+}
+
+/**
+ * Click ripple — accent-coloured ring that expands and fades.
+ * Distinct from stylus glow (cyan radial filled circle) and finger indicators
+ * (gray hollow rings tracking touch). Used to confirm a discrete click event.
+ */
+private fun DrawScope.drawClickFlash(
+    center: Offset,
+    progress: Float, // 0..1 — animation progress
+    alpha: Float,
+) {
+    if (center == Offset.Zero) return
+    val minR = 12.dp.toPx()
+    val maxR = 64.dp.toPx()
+    val radius = minR + progress * (maxR - minR)
+    val strokeW = 3.dp.toPx() * (1f - progress * 0.3f).coerceAtLeast(0.4f)
+
+    // Outer ring stroke.
+    drawCircle(
+        color = androidx.compose.ui.graphics.Color(0xFFFFFFFF).copy(alpha = alpha),
+        radius = radius,
+        center = center,
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW),
+    )
+    // Inner faint fill for the first half of the animation.
+    if (progress < 0.5f) {
+        drawCircle(
+            color = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
+                .copy(alpha = alpha * 0.18f),
+            radius = radius * 0.6f,
+            center = center,
+        )
+    }
 }
 
 // ── Previews ──────────────────────────────────────────────────────────────────

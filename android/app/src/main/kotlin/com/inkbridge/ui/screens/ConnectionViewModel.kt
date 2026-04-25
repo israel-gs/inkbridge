@@ -1,7 +1,11 @@
 package com.inkbridge.ui.screens
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.inkbridge.data.capture.AndroidMotionEvent
@@ -16,11 +20,14 @@ import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusSink
 import com.inkbridge.domain.model.TransportKind
 import com.inkbridge.domain.usecase.StreamStylus
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -56,6 +63,7 @@ class ConnectionViewModel(
     private val connectionManager: ConnectionManager,
     private val settings: SettingsRepository,
     emitDispatcher: CoroutineContext? = null,
+    initialHaptic: HapticFeedback = HapticFeedback { /* no-op default; replaced in UI via setHaptic */ },
 ) : AndroidViewModel(application) {
     // Secondary constructor required by `AndroidViewModelFactory`, which uses
     // reflection to find an `(Application)` ctor. Kotlin default values aren't
@@ -103,6 +111,23 @@ class ConnectionViewModel(
 
     val connectionState: StateFlow<ConnectionState> = connectionManager.state
 
+    // ── Haptic feedback (Feature 3) ────────────────────────────────────────────
+
+    /**
+     * Mutable reference to the [HapticFeedback] implementation.
+     *
+     * The default is a no-op so the ViewModel can be created before a [android.view.View]
+     * is available. [InkBridgeApp] replaces this with a View-backed implementation via
+     * [setHaptic] as soon as the Compose tree is ready.
+     */
+    @Volatile
+    private var haptic: HapticFeedback = initialHaptic
+
+    /** Replaces the haptic implementation (called from the UI layer with a real View). */
+    fun setHaptic(impl: HapticFeedback) {
+        haptic = impl
+    }
+
     // ── Settings ───────────────────────────────────────────────────────────────
 
     private val _naturalScroll = MutableStateFlow(settings.naturalScroll)
@@ -115,6 +140,99 @@ class ConnectionViewModel(
         settings.naturalScroll = enabled
         _naturalScroll.value = enabled
     }
+
+    // ── Auto-reconnect settings ────────────────────────────────────────────────
+
+    private val _autoReconnect = MutableStateFlow(settings.autoReconnect)
+
+    /** Observable auto-reconnect preference. */
+    val autoReconnect: StateFlow<Boolean> = _autoReconnect.asStateFlow()
+
+    /** Persists the auto-reconnect preference and propagates to [autoReconnect]. */
+    fun setAutoReconnect(enabled: Boolean) {
+        settings.autoReconnect = enabled
+        _autoReconnect.value = enabled
+    }
+
+    private val _hapticIntensity = MutableStateFlow(settings.hapticIntensity)
+
+    /** Observable haptic intensity 0-100. 0 = disabled. */
+    val hapticIntensity: StateFlow<Int> = _hapticIntensity.asStateFlow()
+
+    /** Persists haptic intensity and propagates to [hapticIntensity]. */
+    fun setHapticIntensity(value: Int) {
+        val clamped = value.coerceIn(0, 100)
+        settings.hapticIntensity = clamped
+        _hapticIntensity.value = clamped
+    }
+
+    private val _clickFlashEnabled = MutableStateFlow(settings.clickFlashEnabled)
+
+    /** Observable click-flash visual feedback toggle. */
+    val clickFlashEnabled: StateFlow<Boolean> = _clickFlashEnabled.asStateFlow()
+
+    /** Persists the click-flash toggle. */
+    fun setClickFlashEnabled(enabled: Boolean) {
+        settings.clickFlashEnabled = enabled
+        _clickFlashEnabled.value = enabled
+    }
+
+    /**
+     * Stream of click-flash events. Each emission carries the **normalised**
+     * (0..1) position on the capture surface where a click was confirmed.
+     * The CaptureSurface collects this and animates a ripple at that point.
+     *
+     * Replay 0, extraBufferCapacity 1 with DROP_OLDEST so a rapid double-click
+     * always shows at least one flash without blocking the producer.
+     */
+    private val _clickFlashes = kotlinx.coroutines.flow.MutableSharedFlow<androidx.compose.ui.geometry.Offset>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val clickFlashes: kotlinx.coroutines.flow.SharedFlow<androidx.compose.ui.geometry.Offset> =
+        _clickFlashes.asSharedFlow()
+
+    private fun emitClickFlash(xNorm: Float, yNorm: Float) {
+        if (!_clickFlashEnabled.value) return
+        _clickFlashes.tryEmit(androidx.compose.ui.geometry.Offset(xNorm, yNorm))
+    }
+
+    // ── Auto-reconnect internal state ──────────────────────────────────────────
+
+    /** Whether the UI should show "Auto-reconnecting…" indicator. */
+    private val _isAutoReconnecting = MutableStateFlow(false)
+    val isAutoReconnecting: StateFlow<Boolean> = _isAutoReconnecting.asStateFlow()
+
+    /** Coroutine job for the active retry loop — cancelled on user disconnect. */
+    private var reconnectJob: Job? = null
+
+    /** Last params used for a successful connection (for auto-reconnect). */
+    @Volatile private var lastConnectHost: String? = null
+    @Volatile private var lastConnectPort: Int? = null
+    @Volatile private var lastConnectKind: TransportKind? = null
+
+    // ── USB plug/unplug BroadcastReceiver ─────────────────────────────────────
+
+    private val usbReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(
+                context: Context?,
+                intent: Intent?,
+            ) {
+                if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+                    // Cable plugged: immediately attempt reconnect if params saved.
+                    val host = lastConnectHost ?: settings.lastHost
+                    val port = lastConnectPort ?: settings.lastPort
+                    val kind = lastConnectKind ?: settings.lastTransport
+                    if (host != null && port != null && kind != null &&
+                        connectionManager.state.value !is ConnectionState.Connected
+                    ) {
+                        startReconnectLoop(host, port, kind, immediate = true)
+                    }
+                }
+            }
+        }
 
     // Two-finger gesture detector — shared across gesture events.
     private val gestureDetector = TwoFingerGestureDetector()
@@ -205,6 +323,12 @@ class ConnectionViewModel(
                 job(streamStylus)
             }
         }
+
+        // Register USB plug/unplug receiver. No special permission needed for
+        // ACTION_USB_DEVICE_ATTACHED when declared in the manifest; registering
+        // dynamically here is complementary and does not require extra permissions.
+        val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        application.registerReceiver(usbReceiver, filter)
     }
 
     // ── Actions ────────────────────────────────────────────────────────────────
@@ -216,27 +340,94 @@ class ConnectionViewModel(
      *
      * Bug 4 fix: transport is swapped BEFORE state transitions to Connected so that
      * the very first frames emitted after the state change reach a live socket.
+     *
+     * On success, persists connection params to [SettingsRepository] for auto-reconnect,
+     * and watches [connectionManager.state] for [ConnectionState.Error] to trigger retry.
      */
     fun connect(
         host: String,
         port: Int,
         kind: TransportKind,
     ) {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        _isAutoReconnecting.value = false
+
         viewModelScope.launch {
             connectionManager.connect(host, port, kind)
             // swapTransport after connect() so the new transport is ready before
             // any caller observing connectionState.Connected fires onMotion.
             streamStylus.swapTransport(connectionManager.currentTransport())
+
+            if (connectionManager.state.value is ConnectionState.Connected) {
+                // Persist params for auto-reconnect.
+                lastConnectHost = host
+                lastConnectPort = port
+                lastConnectKind = kind
+                settings.lastHost = host
+                settings.lastPort = port
+                settings.lastTransport = kind
+
+                // Watch for error state to trigger auto-reconnect.
+                connectionManager.state.collect { state ->
+                    if (state is ConnectionState.Error &&
+                        settings.autoReconnect &&
+                        reconnectJob == null
+                    ) {
+                        startReconnectLoop(host, port, kind, immediate = false)
+                    }
+                }
+            }
         }
     }
 
     fun disconnect() {
+        // Cancel any active reconnect loop first — this is the user's intentional action.
+        reconnectJob?.cancel()
+        reconnectJob = null
+        _isAutoReconnecting.value = false
+
         viewModelScope.launch {
             // Null the transport first so in-flight channel jobs see no transport
             // and drop gracefully, rather than writing to a closing socket.
             streamStylus.swapTransport(null)
             connectionManager.disconnect()
         }
+    }
+
+    /**
+     * Starts the auto-reconnect retry loop.
+     *
+     * Retries up to 30 times with 2-second intervals. The loop stops when:
+     * - Connection succeeds ([ConnectionState.Connected]).
+     * - [maxAttempts] is reached.
+     * - [reconnectJob] is cancelled (user disconnect).
+     *
+     * @param immediate  When true (USB plug event), attempt immediately before the first delay.
+     */
+    private fun startReconnectLoop(
+        host: String,
+        port: Int,
+        kind: TransportKind,
+        immediate: Boolean,
+    ) {
+        val maxAttempts = 30
+        reconnectJob =
+            viewModelScope.launch {
+                _isAutoReconnecting.value = true
+                var attempts = 0
+                if (!immediate) delay(2_000)
+                while (attempts < maxAttempts) {
+                    if (connectionManager.state.value is ConnectionState.Connected) break
+                    connectionManager.connect(host, port, kind)
+                    streamStylus.swapTransport(connectionManager.currentTransport())
+                    if (connectionManager.state.value is ConnectionState.Connected) break
+                    attempts++
+                    if (attempts < maxAttempts) delay(2_000)
+                }
+                _isAutoReconnecting.value = false
+                reconnectJob = null
+            }
     }
 
     /**
@@ -423,6 +614,8 @@ class ConnectionViewModel(
                     }
                 }
                 is GestureEvent.RightClick -> {
+                    haptic.performTapFeedback()
+                    emitClickFlash(xNorm = ge.xNormalized, yNorm = ge.yNormalized)
                     emitChannel.trySend { sink ->
                         sink.emitButton(primaryPressed = false, secondaryPressed = true, timestampNs = timestampNs)
                         sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
@@ -491,6 +684,13 @@ class ConnectionViewModel(
                         elapsed < trackpadTapTimeoutMs &&
                         trackpadCumMovement < trackpadTapMovementThresholdPx
                 if (isTap) {
+                    // Haptic fires only on a confirmed tap → no buzz on drags.
+                    haptic.performTapFeedback()
+                    // Visual ripple at the tap point.
+                    emitClickFlash(
+                        xNorm = (x / viewWidth.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        yNorm = (y / viewHeight.coerceAtLeast(1)).coerceIn(0f, 1f),
+                    )
                     emitChannel.trySend { sink ->
                         sink.emitButton(primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs)
                         sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
@@ -536,6 +736,12 @@ class ConnectionViewModel(
         // Disconnect the transport. viewModelScope is already cancelled here, so we
         // cannot use it — runBlocking is correct: we must not leave an open socket.
         runBlocking { connectionManager.disconnect() }
+        // Unregister USB plug/unplug receiver.
+        try {
+            getApplication<Application>().unregisterReceiver(usbReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Receiver was never registered (e.g. in tests) — safe to ignore.
+        }
     }
 
     // ── Stats data class ───────────────────────────────────────────────────────

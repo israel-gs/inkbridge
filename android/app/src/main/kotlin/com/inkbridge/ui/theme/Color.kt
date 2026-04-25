@@ -49,3 +49,6 @@ val CanvasBackground = InkBlack // same as root, edge-to-edge feel
 val CanvasDot = Color(0xFF262626) // subtle, ~15% relative lightness
 val CanvasDotActive = Color(0xFF3F3F3F) // slightly brighter when connected
 val CanvasFeedbackGlow = InkSecondary // cyan — stylus feedback
+
+// Finger indicator — gray-300 at low opacity, distinct from cyan stylus glow.
+val FingerIndicatorColor = Color(0xFFD1D5DB) // gray-300
