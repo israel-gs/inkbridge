@@ -19,6 +19,19 @@ public final class InkBridgeServer: ObservableObject {
     @Published public private(set) var stats: Stats = Stats()
     @Published public private(set) var latency: LatencyTracker.Snapshot = .zero
 
+    /// Tracks an in-flight CAPTURE_REQUEST from the tablet. The ViewModel
+    /// observes this and presents the modal that monitors `NSEvent.keyDown`.
+    /// Set to `nil` after the response is sent (success or cancel).
+    @Published public var pendingCaptureRequest: PendingCaptureRequest?
+
+    /// One in-flight tablet → Mac key-capture request. The Mac shows a modal
+    /// that intercepts the next physical key press, then the ViewModel calls
+    /// `submitCaptureResponse` to deliver the result back to the tablet.
+    public struct PendingCaptureRequest: Equatable {
+        public let slotId: UInt8
+        public init(slotId: UInt8) { self.slotId = slotId }
+    }
+
     // MARK: - Private latency tracker
 
     private var latencyTracker = LatencyTracker()
@@ -143,6 +156,37 @@ public final class InkBridgeServer: ObservableObject {
         }
     }
 
+    /// Sends a CAPTURE_RESPONSE back to the tablet over whichever transport
+    /// is currently connected. Clears `pendingCaptureRequest`.
+    public func submitCaptureResponse(
+        slotId: UInt8,
+        keyCode: UInt8,
+        modifiers: UInt8,
+        cancelled: Bool
+    ) {
+        let event = StylusEvent.captureResponse(
+            slotId: slotId,
+            keyCode: keyCode,
+            modifiers: modifiers,
+            cancelled: cancelled
+        )
+        do {
+            let data = try BinaryStylusCodec.encode(
+                event,
+                flags: 0,
+                sequence: 0,
+                timestampNs: DispatchTime.now().uptimeNanoseconds
+            )
+            // TCP carries the loopback connection; UDPListener.send is a no-op.
+            tcpListener.send(data)
+            udpListener.send(data)
+        } catch {
+            // Encoding cannot really fail with valid inputs; if it does, drop
+            // and clear the request so the tablet eventually times out.
+        }
+        pendingCaptureRequest = nil
+    }
+
     /// Toggle position smoothing on or off. When transitioning from off to on
     /// the filters MUST be reset so the next stroke does not start lagging
     /// against stale velocity estimates.
@@ -208,6 +252,18 @@ public final class InkBridgeServer: ObservableObject {
                 stats.injectionFailures += 1
             }
             recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+            return
+
+        case let .captureRequest(slotId):
+            // Tablet wants the Mac to capture the next physical key combo.
+            // Surface as published state for the ViewModel to render a modal.
+            // No latency to record — this is a control-plane message.
+            pendingCaptureRequest = PendingCaptureRequest(slotId: slotId)
+            return
+
+        case .captureResponse:
+            // Mac is the SENDER of capture responses; receiving one inbound
+            // would mean a stray frame from a misbehaving client. Ignore.
             return
 
         case let .key(keyCode, modifiers, action):

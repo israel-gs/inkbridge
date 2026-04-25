@@ -119,6 +119,7 @@ fun StatusScreen(
     onRenameProfile: (String, String) -> Unit = { _, _ -> },
     onDeleteProfile: (String) -> Unit = {},
     onUpdateSlot: (Int, com.inkbridge.domain.model.ExpressKeyAction, String) -> Unit = { _, _, _ -> },
+    onRequestMacCapture: suspend (UByte) -> Pair<UByte, UByte>? = { null },
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -230,6 +231,7 @@ fun StatusScreen(
                 onRenameProfile = onRenameProfile,
                 onDeleteProfile = onDeleteProfile,
                 onUpdateSlot = onUpdateSlot,
+                onRequestMacCapture = onRequestMacCapture,
             )
         }
     }
@@ -451,6 +453,7 @@ private fun SettingsSheet(
     onRenameProfile: (String, String) -> Unit = { _, _ -> },
     onDeleteProfile: (String) -> Unit = {},
     onUpdateSlot: (Int, com.inkbridge.domain.model.ExpressKeyAction, String) -> Unit = { _, _, _ -> },
+    onRequestMacCapture: suspend (UByte) -> Pair<UByte, UByte>? = { null },
 ) {
     Column(
         modifier =
@@ -618,6 +621,7 @@ private fun SettingsSheet(
                 onRenameProfile = onRenameProfile,
                 onDeleteProfile = onDeleteProfile,
                 onUpdateSlot = onUpdateSlot,
+                onRequestMacCapture = onRequestMacCapture,
             )
         }
     }

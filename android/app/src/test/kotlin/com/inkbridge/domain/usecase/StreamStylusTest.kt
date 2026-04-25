@@ -34,6 +34,8 @@ class StreamStylusTest {
         private val _isConnected = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = _isConnected
         override val errors: SharedFlow<Throwable> = MutableSharedFlow()
+        override val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame> =
+            MutableSharedFlow()
 
         override suspend fun connect(): Result<Unit> = Result.success(Unit)
 

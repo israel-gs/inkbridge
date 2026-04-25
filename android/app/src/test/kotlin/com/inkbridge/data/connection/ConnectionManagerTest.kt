@@ -37,6 +37,8 @@ class ConnectionManagerTest {
         override val isConnected: StateFlow<Boolean> = _isConnected
         val mutableErrors = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)
         override val errors: SharedFlow<Throwable> = mutableErrors
+        override val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame> =
+            MutableSharedFlow()
 
         var connectCalled = false
         var closeCalled = false

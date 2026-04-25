@@ -196,6 +196,7 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
                 onUpdateSlot = { slotId, action, label ->
                     viewModel.updateSlot(slotId, action, label)
                 },
+                onRequestMacCapture = { slot -> viewModel.requestMacCapture(slot) },
             )
         }
     }

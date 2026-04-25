@@ -52,6 +52,8 @@ public enum EventTypeValue {
     public static let stylusZoom: UInt8      = 0x05
     public static let cursorDelta: UInt8     = 0x06
     public static let keyEvent: UInt8        = 0x07
+    public static let captureRequest: UInt8  = 0x08
+    public static let captureResponse: UInt8 = 0x09
 }
 
 /// Express-key action carried by KEY_EVENT frames. wire-protocol.md R2.
@@ -112,6 +114,16 @@ public enum StylusEvent: Equatable, Sendable {
     /// - modifiers: bit 0 = Cmd, bit 1 = Ctrl, bit 2 = Opt, bit 3 = Shift.
     /// - action:    press, release, or tap (atomic press+release).
     case key(keyCode: UInt8, modifiers: UInt8, action: KeyAction)
+
+    /// CAPTURE_REQUEST (event_type = 0x08) — sent **tablet → Mac** to ask the
+    /// Mac to open a key-capture modal for the given express-key slot.
+    /// Payload: 4 bytes (slotId + 3 reserved).
+    case captureRequest(slotId: UInt8)
+
+    /// CAPTURE_RESPONSE (event_type = 0x09) — sent **Mac → tablet** with the
+    /// captured combo (or `cancelled = 1` if the user dismissed the modal).
+    /// Payload: 4 bytes — slotId, keyCode, modifiers, cancelled.
+    case captureResponse(slotId: UInt8, keyCode: UInt8, modifiers: UInt8, cancelled: Bool)
 }
 
 /// A successfully decoded wire frame.

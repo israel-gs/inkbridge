@@ -22,6 +22,8 @@ class StreamStylusReconnectTest {
         private val connectedFlow = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = connectedFlow
         override val errors: SharedFlow<Throwable> = MutableSharedFlow()
+        override val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame> =
+            MutableSharedFlow()
 
         override suspend fun connect() = Result.success(Unit)
 
@@ -40,6 +42,8 @@ class StreamStylusReconnectTest {
         private val connectedFlow = MutableStateFlow(true)
         override val isConnected: StateFlow<Boolean> = connectedFlow
         override val errors: SharedFlow<Throwable> = MutableSharedFlow()
+        override val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame> =
+            MutableSharedFlow()
 
         override suspend fun connect() = Result.success(Unit)
 

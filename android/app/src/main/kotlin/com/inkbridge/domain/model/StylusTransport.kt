@@ -28,6 +28,14 @@ interface StylusTransport {
     val errors: SharedFlow<Throwable>
 
     /**
+     * Hot stream of frames received FROM the Mac (Mac → tablet direction).
+     * Used by control-plane messages such as CAPTURE_RESPONSE for the Mac-side
+     * key-capture flow. Bidirectional transports (TCP) populate this; one-shot
+     * outbound transports (UDP without a tracked remote) leave it empty.
+     */
+    val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame>
+
+    /**
      * Establishes the underlying socket connection.
      * Calling [connect] when already connected is a no-op (returns [Result.success]).
      */

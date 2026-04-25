@@ -93,6 +93,21 @@ public struct BinaryStylusCodec {
             payloadWriter = { data in
                 writeKeyPayload(into: &data, keyCode: keyCode, modifiers: modifiers, action: action)
             }
+        case let .captureRequest(slotId):
+            eventType = EventTypeValue.captureRequest
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeCaptureRequestPayload(into: &data, slotId: slotId)
+            }
+        case let .captureResponse(slotId, keyCode, modifiers, cancelled):
+            eventType = EventTypeValue.captureResponse
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeCaptureResponsePayload(
+                    into: &data,
+                    slotId: slotId, keyCode: keyCode, modifiers: modifiers, cancelled: cancelled
+                )
+            }
         }
 
         var data = Data(capacity: headerSize + payloadSize)
@@ -171,6 +186,29 @@ public struct BinaryStylusCodec {
         data.append(0x00)               // offset 19: _pad
     }
 
+    private static func writeCaptureRequestPayload(
+        into data: inout Data,
+        slotId: UInt8
+    ) {
+        data.append(slotId)             // offset 16: slot_id
+        data.append(0x00)               // offset 17: _pad
+        data.append(0x00)               // offset 18: _pad
+        data.append(0x00)               // offset 19: _pad
+    }
+
+    private static func writeCaptureResponsePayload(
+        into data: inout Data,
+        slotId: UInt8,
+        keyCode: UInt8,
+        modifiers: UInt8,
+        cancelled: Bool
+    ) {
+        data.append(slotId)             // offset 16: slot_id
+        data.append(keyCode)            // offset 17: key_code
+        data.append(modifiers)          // offset 18: modifiers
+        data.append(cancelled ? 0x01 : 0x00)  // offset 19: cancelled flag
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Decode
     // ─────────────────────────────────────────────────────────────
@@ -227,6 +265,10 @@ public struct BinaryStylusCodec {
             event = try decodeCursorDeltaPayload(data: data, cursor: &cursor)
         case EventTypeValue.keyEvent:
             event = try decodeKeyPayload(data: data, cursor: &cursor)
+        case EventTypeValue.captureRequest:
+            event = try decodeCaptureRequestPayload(data: data, cursor: &cursor)
+        case EventTypeValue.captureResponse:
+            event = try decodeCaptureResponsePayload(data: data, cursor: &cursor)
         default:
             throw ProtocolError.unknownType(got: eventType)
         }
@@ -318,6 +360,27 @@ public struct BinaryStylusCodec {
             throw ProtocolError.unknownType(got: actionRaw)
         }
         return .key(keyCode: keyCode, modifiers: modifiers, action: action)
+    }
+
+    private static func decodeCaptureRequestPayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+        let slotId = data.read(UInt8.self, at: &cursor)
+        // 3 bytes _pad consumed and discarded.
+        _ = data.read(UInt8.self, at: &cursor)
+        _ = data.read(UInt8.self, at: &cursor)
+        _ = data.read(UInt8.self, at: &cursor)
+        return .captureRequest(slotId: slotId)
+    }
+
+    private static func decodeCaptureResponsePayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+        let slotId    = data.read(UInt8.self, at: &cursor)
+        let keyCode   = data.read(UInt8.self, at: &cursor)
+        let modifiers = data.read(UInt8.self, at: &cursor)
+        let cancelled = data.read(UInt8.self, at: &cursor) != 0
+        return .captureResponse(slotId: slotId, keyCode: keyCode, modifiers: modifiers, cancelled: cancelled)
     }
 }
 

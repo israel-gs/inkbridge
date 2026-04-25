@@ -49,6 +49,11 @@ class UdpStylusClient(
     private val _errors = MutableSharedFlow<Throwable>(extraBufferCapacity = 1)
     override val errors: SharedFlow<Throwable> = _errors.asSharedFlow()
 
+    // UDP send-only — no inbound frames are expected here. The empty SharedFlow
+    // satisfies the protocol; capture-response only works over TCP.
+    override val incomingFrames: SharedFlow<com.inkbridge.protocol.DecodedFrame> =
+        MutableSharedFlow<com.inkbridge.protocol.DecodedFrame>(replay = 0).asSharedFlow()
+
     @Volatile
     private var socket: DatagramSocket? = null
 

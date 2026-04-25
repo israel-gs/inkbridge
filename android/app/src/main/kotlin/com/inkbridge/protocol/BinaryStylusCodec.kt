@@ -88,6 +88,16 @@ object BinaryStylusCodec {
                 payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
                 writePayload = { buf -> writeKeyPayload(buf, event) }
             }
+            is StylusEvent.CaptureRequest -> {
+                eventTypeByte = EventType.CAPTURE_REQUEST.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeCaptureRequestPayload(buf, event) }
+            }
+            is StylusEvent.CaptureResponse -> {
+                eventTypeByte = EventType.CAPTURE_RESPONSE.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeCaptureResponsePayload(buf, event) }
+            }
         }
 
         val buf = ByteBuffer.allocate(HEADER_SIZE + payloadSize).order(ByteOrder.LITTLE_ENDIAN)
@@ -178,6 +188,26 @@ object BinaryStylusCodec {
         buf.put(0x00)                            // offset 19: _pad
     }
 
+    private fun writeCaptureRequestPayload(
+        buf: ByteBuffer,
+        event: StylusEvent.CaptureRequest,
+    ) {
+        buf.put(event.slotId.toByte())  // offset 16: slot_id
+        buf.put(0x00)                   // offset 17: _pad
+        buf.put(0x00)                   // offset 18: _pad
+        buf.put(0x00)                   // offset 19: _pad
+    }
+
+    private fun writeCaptureResponsePayload(
+        buf: ByteBuffer,
+        event: StylusEvent.CaptureResponse,
+    ) {
+        buf.put(event.slotId.toByte())                 // offset 16: slot_id
+        buf.put(event.keyCode.toByte())                // offset 17: key_code
+        buf.put(event.modifiers.toByte())              // offset 18: modifiers
+        buf.put(if (event.cancelled) 0x01 else 0x00)   // offset 19: cancelled flag
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Decode
     // ─────────────────────────────────────────────────────────────
@@ -233,6 +263,8 @@ object BinaryStylusCodec {
                 EventType.STYLUS_ZOOM -> decodeZoomPayload(bytes, buf)
                 EventType.CURSOR_DELTA -> decodeCursorDeltaPayload(bytes, buf)
                 EventType.KEY_EVENT -> decodeKeyPayload(bytes, buf)
+                EventType.CAPTURE_REQUEST -> decodeCaptureRequestPayload(bytes, buf)
+                EventType.CAPTURE_RESPONSE -> decodeCaptureResponsePayload(bytes, buf)
                 else -> throw ProtocolException(
                     "Unknown event_type: 0x${eventType.toString(16).uppercase()}",
                 )
@@ -364,5 +396,38 @@ object BinaryStylusCodec {
                 "Unknown KEY_EVENT action: 0x${actionByte.toString(16).uppercase()}",
             )
         return StylusEvent.Key(keyCode = keyCode, modifiers = modifiers, action = action)
+    }
+
+    private fun decodeCaptureRequestPayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.CaptureRequest {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException("CAPTURE_REQUEST frame too short")
+        }
+        val slotId = buf.get().toUByte()
+        buf.get(); buf.get(); buf.get() // 3 pad bytes
+        return StylusEvent.CaptureRequest(slotId = slotId)
+    }
+
+    private fun decodeCaptureResponsePayload(
+        bytes: ByteArray,
+        buf: ByteBuffer,
+    ): StylusEvent.CaptureResponse {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException("CAPTURE_RESPONSE frame too short")
+        }
+        val slotId = buf.get().toUByte()
+        val keyCode = buf.get().toUByte()
+        val modifiers = buf.get().toUByte()
+        val cancelled = buf.get() != 0.toByte()
+        return StylusEvent.CaptureResponse(
+            slotId = slotId,
+            keyCode = keyCode,
+            modifiers = modifiers,
+            cancelled = cancelled,
+        )
     }
 }

@@ -19,6 +19,7 @@ final class ServerViewModel: ObservableObject {
     @Published private(set) var latency: LatencyTracker.Snapshot = .zero
     @Published private(set) var isTrusted: Bool = false
     @Published private(set) var tunnelState: UsbTunnelState = .idle
+    @Published private(set) var pendingCapture: InkBridgeServer.PendingCaptureRequest?
 
     /// Position smoothing on/off. Persisted across launches.
     @Published var smoothingEnabled: Bool = true {
@@ -105,6 +106,10 @@ final class ServerViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$latency)
 
+        server.$pendingCaptureRequest
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$pendingCapture)
+
         tunnelMaintainer.$state
             .receive(on: DispatchQueue.main)
             .assign(to: &$tunnelState)
@@ -180,6 +185,39 @@ final class ServerViewModel: ObservableObject {
     /// Stop the server manually.
     func stopServer() {
         server.stop()
+    }
+
+    // MARK: - Express-key remote capture
+
+    /// Sends the captured key combo back to the tablet for the pending slot.
+    func submitCapture(virtualKey: UInt16, modifierFlags: NSEvent.ModifierFlags) {
+        guard let request = pendingCapture else { return }
+        var bits: UInt8 = 0
+        if modifierFlags.contains(.command)  { bits |= 0x01 } // CMD
+        if modifierFlags.contains(.control)  { bits |= 0x02 } // CTRL
+        if modifierFlags.contains(.option)   { bits |= 0x04 } // OPT
+        if modifierFlags.contains(.shift)    { bits |= 0x08 } // SHIFT
+
+        // virtualKey is the Carbon-era kVK_*; clamp to u8 (all printable
+        // keys + arrows + F-keys fit in 8 bits — kVK_F12 = 0x6F).
+        let keyCode = UInt8(truncatingIfNeeded: virtualKey)
+        server.submitCaptureResponse(
+            slotId: request.slotId,
+            keyCode: keyCode,
+            modifiers: bits,
+            cancelled: false
+        )
+    }
+
+    /// User dismissed the capture modal without pressing a key.
+    func cancelCapture() {
+        guard let request = pendingCapture else { return }
+        server.submitCaptureResponse(
+            slotId: request.slotId,
+            keyCode: 0,
+            modifiers: 0,
+            cancelled: true
+        )
     }
 
     /// Start the server manually. Only meaningful when state is `.idle` and

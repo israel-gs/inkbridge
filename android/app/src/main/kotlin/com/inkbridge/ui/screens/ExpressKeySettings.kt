@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -88,6 +89,7 @@ fun ExpressKeyProfileSection(
     onRenameProfile: (String, String) -> Unit,
     onDeleteProfile: (String) -> Unit,
     onUpdateSlot: (Int, ExpressKeyAction, String) -> Unit,
+    onRequestMacCapture: suspend (UByte) -> Pair<UByte, UByte>? = { null },
 ) {
     val active = profiles.firstOrNull { it.id == activeProfileId } ?: profiles.firstOrNull()
     var dropdownOpen by remember { mutableStateOf(false) }
@@ -252,6 +254,7 @@ fun ExpressKeyProfileSection(
                     editingSlot = null
                 },
                 onCancel = { editingSlot = null },
+                onRequestMacCapture = onRequestMacCapture,
             )
         }
     }
@@ -429,6 +432,7 @@ private fun SlotEditorSheet(
     initial: ExpressKey,
     onSave: (ExpressKeyAction, String) -> Unit,
     onCancel: () -> Unit,
+    onRequestMacCapture: suspend (UByte) -> Pair<UByte, UByte>? = { null },
 ) {
     val initialAction = initial.action
     var isHold by remember(initial.id) { mutableStateOf(initialAction is ExpressKeyAction.ModifierHold) }
@@ -510,8 +514,6 @@ private fun SlotEditorSheet(
                     onCaptured = { newKeyCode, newMods ->
                         keyCode = newKeyCode
                         modifiers = newMods
-                        // Auto-fill label only if the user did not type a custom one
-                        // (i.e. label still equals the previously-auto-generated one).
                         val nextAuto = KeyComboLabel.forShortcut(newKeyCode, newMods)
                         if (label == lastAutoLabel || label.isBlank()) {
                             label = nextAuto
@@ -521,6 +523,20 @@ private fun SlotEditorSheet(
                     onClear = {
                         keyCode = 0u
                         modifiers = 0u
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                MacCaptureButton(
+                    slotId = initial.id.toUByte(),
+                    onRequestMacCapture = onRequestMacCapture,
+                    onCaptured = { newKeyCode, newMods ->
+                        keyCode = newKeyCode
+                        modifiers = newMods
+                        val nextAuto = KeyComboLabel.forShortcut(newKeyCode, newMods)
+                        if (label == lastAutoLabel || label.isBlank()) {
+                            label = nextAuto
+                        }
+                        lastAutoLabel = nextAuto
                     },
                 )
             } else {
@@ -657,6 +673,60 @@ private fun KeyCaptureBox(
         if (captured != null) {
             Spacer(Modifier.height(6.dp))
             TextButton(onClick = onClear) { Text("Clear") }
+        }
+    }
+}
+
+/**
+ * "Capture from Mac" button — when tapped, sends a CAPTURE_REQUEST over the
+ * wire and suspends until the Mac returns a response (user pressed a key) or
+ * cancels. While in flight, the button shows a spinner-y "Waiting for Mac…"
+ * label so the user knows to look at the Mac.
+ */
+@Composable
+private fun MacCaptureButton(
+    slotId: UByte,
+    onRequestMacCapture: suspend (UByte) -> Pair<UByte, UByte>?,
+    onCaptured: (UByte, UByte) -> Unit,
+) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var pending by remember { mutableStateOf(false) }
+    var lastError by remember { mutableStateOf<String?>(null) }
+
+    Column {
+        TextButton(
+            onClick = {
+                if (pending) return@TextButton
+                pending = true
+                lastError = null
+                scope.launch {
+                    try {
+                        val result = onRequestMacCapture(slotId)
+                        if (result != null) {
+                            onCaptured(result.first, result.second)
+                        } else {
+                            lastError = "Cancelled or timed out"
+                        }
+                    } catch (t: Throwable) {
+                        lastError = t.message ?: "Capture failed"
+                    } finally {
+                        pending = false
+                    }
+                }
+            },
+            enabled = !pending,
+        ) {
+            Text(
+                text = if (pending) "Waiting for Mac…" else "Capture from Mac",
+                color = if (pending) MaterialTheme.colorScheme.onSurfaceVariant else Cyan,
+            )
+        }
+        lastError?.let {
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

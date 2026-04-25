@@ -25,6 +25,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -264,6 +265,40 @@ class ConnectionViewModel(
             setActiveProfile(remaining.first().id)
         }
         return true
+    }
+
+    /**
+     * Asks the Mac to capture a key combo for [slotId] using its hardware
+     * keyboard. Sends a CAPTURE_REQUEST frame, then suspends until a matching
+     * CAPTURE_RESPONSE arrives or the timeout expires.
+     *
+     * Returns the captured `(keyCode, modifiers)` pair on success, or null if
+     * the user cancelled the modal on the Mac side, the timeout elapsed, or
+     * no transport is currently connected.
+     */
+    suspend fun requestMacCapture(
+        slotId: UByte,
+        timeoutMs: Long = 30_000L,
+    ): Pair<UByte, UByte>? {
+        val transport = connectionManager.currentTransport() ?: return null
+        val request = com.inkbridge.protocol.StylusEvent.CaptureRequest(slotId = slotId)
+        val frame = com.inkbridge.protocol.BinaryStylusCodec.encode(
+            event = request,
+            flags = 0u,
+            sequence = 0u,
+            timestampNs = System.nanoTime().toULong(),
+        )
+        transport.send(frame).getOrElse { return null }
+
+        return kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            val match = transport.incomingFrames.first { decoded ->
+                val r = decoded.event as? com.inkbridge.protocol.StylusEvent.CaptureResponse
+                r != null && r.slotId == slotId
+            }
+            val resp = match.event as com.inkbridge.protocol.StylusEvent.CaptureResponse
+            if (resp.cancelled) null
+            else resp.keyCode to resp.modifiers
+        }
     }
 
     /** Updates the action + label of a single slot in the active profile. */

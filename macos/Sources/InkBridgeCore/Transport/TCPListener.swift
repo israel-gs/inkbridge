@@ -111,6 +111,18 @@ public final class TCPListener: PacketListener {
         errorContinuation = nil
     }
 
+    /// Sends a wire-format frame back to the currently-connected client.
+    /// Used for Mac → tablet messages such as CAPTURE_RESPONSE. No-op when
+    /// no client is connected. Errors are forwarded to the errors stream.
+    public func send(_ data: Data) {
+        guard let connection = activeConnection else { return }
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            if let error {
+                self?.errorContinuation?.yield(error)
+            }
+        })
+    }
+
     // MARK: - Connection handling
 
     private func handleNewConnection(_ connection: NWConnection) {
@@ -195,6 +207,8 @@ public final class TCPListener: PacketListener {
             case 0x05: payloadSize = 4    // STYLUS_ZOOM (R13)
             case 0x06: payloadSize = 4    // CURSOR_DELTA
             case 0x07: payloadSize = 4    // KEY_EVENT (express keys)
+            case 0x08: payloadSize = 4    // CAPTURE_REQUEST  (tablet → Mac)
+            case 0x09: payloadSize = 4    // CAPTURE_RESPONSE (Mac → tablet, normally outbound)
             default:
                 // Unknown type — cannot determine payload size, so the entire buffer
                 // must be discarded. This is a known limitation: without a

@@ -46,6 +46,8 @@ object EventType {
     const val STYLUS_ZOOM: UByte = 0x05u
     const val CURSOR_DELTA: UByte = 0x06u
     const val KEY_EVENT: UByte = 0x07u
+    const val CAPTURE_REQUEST: UByte = 0x08u
+    const val CAPTURE_RESPONSE: UByte = 0x09u
 }
 
 /**
@@ -165,6 +167,25 @@ sealed class StylusEvent {
         val keyCode: UByte,
         val modifiers: UByte,
         val action: KeyAction,
+    ) : StylusEvent()
+
+    /**
+     * CAPTURE_REQUEST (event_type = 0x08) — tablet → Mac. Asks the Mac to
+     * open its key-capture modal for the given express-key slot.
+     */
+    data class CaptureRequest(
+        val slotId: UByte,
+    ) : StylusEvent()
+
+    /**
+     * CAPTURE_RESPONSE (event_type = 0x09) — Mac → tablet. Carries the
+     * captured combo (or `cancelled = true` if the user dismissed the modal).
+     */
+    data class CaptureResponse(
+        val slotId: UByte,
+        val keyCode: UByte,
+        val modifiers: UByte,
+        val cancelled: Boolean,
     ) : StylusEvent()
 }
 
