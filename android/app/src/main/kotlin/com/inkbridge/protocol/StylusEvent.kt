@@ -29,6 +29,9 @@ object Flags {
     const val HOVER: UByte = 0x04u
     const val BUTTON_PRIMARY: UByte = 0x08u
     const val BUTTON_SECONDARY: UByte = 0x10u
+    /** Scroll/gesture phase markers — used in STYLUS_SCROLL frames. */
+    const val SCROLL_BEGIN: UByte = 0x40u
+    const val SCROLL_END: UByte = 0x80u
 }
 
 /**
@@ -38,6 +41,9 @@ object EventType {
     const val STYLUS_MOVE: UByte = 0x01u
     const val STYLUS_PROXIMITY: UByte = 0x02u
     const val STYLUS_BUTTON: UByte = 0x03u
+    const val STYLUS_SCROLL: UByte = 0x04u
+    const val STYLUS_ZOOM: UByte = 0x05u
+    const val CURSOR_DELTA: UByte = 0x06u
 }
 
 /**
@@ -83,6 +89,42 @@ sealed class StylusEvent {
      */
     data class Button(
         val buttons: UByte,
+    ) : StylusEvent()
+
+    /**
+     * STYLUS_SCROLL (event_type = 0x04) — two-finger drag gesture scroll delta.
+     * Payload: 4 bytes. Total frame: 20 bytes.
+     *
+     * @param deltaX Horizontal scroll delta in points (negative = left, positive = right).
+     * @param deltaY Vertical scroll delta in points (negative = up, positive = down — sender
+     *               uses raw direction; receiver applies natural-scroll inversion if configured).
+     */
+    data class Scroll(
+        val deltaX: Short,
+        val deltaY: Short,
+    ) : StylusEvent()
+
+    /**
+     * STYLUS_ZOOM (event_type = 0x05) — two-finger pinch gesture zoom delta.
+     * Payload: 4 bytes. Total frame: 20 bytes.
+     *
+     * @param scaleDelta Multiplicative zoom delta since last frame. 1.0 = no change.
+     *                   Values > 1.0 = zoom in, < 1.0 = zoom out. Typical range 0.5..2.0.
+     */
+    data class Zoom(
+        val scaleDelta: Float,
+    ) : StylusEvent()
+
+    /**
+     * CURSOR_DELTA (event_type = 0x06) — relative cursor movement (trackpad mode).
+     * Payload: 4 bytes. Total frame: 20 bytes.
+     *
+     * @param deltaX Horizontal cursor delta in points (negative = left, positive = right).
+     * @param deltaY Vertical cursor delta in points (negative = up, positive = down).
+     */
+    data class CursorDelta(
+        val deltaX: Short,
+        val deltaY: Short,
     ) : StylusEvent()
 }
 

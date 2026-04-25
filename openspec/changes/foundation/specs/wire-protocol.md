@@ -66,6 +66,8 @@ The `event_type` byte at offset 1 MUST be one of the following values. All other
 | `0x01`| `STYLUS_MOVE`     | Stylus tip touching or hovering with position data.       |
 | `0x02`| `STYLUS_PROXIMITY`| Stylus entered or left the proximity zone.                |
 | `0x03`| `STYLUS_BUTTON`   | Button state changed without movement.                    |
+| `0x04`| `STYLUS_SCROLL`   | Two-finger drag gesture scroll delta. (R12)               |
+| `0x05`| `STYLUS_ZOOM`     | Two-finger pinch gesture zoom delta. (R13)                |
 
 #### Scenario: unknown event_type is discarded
 - **Given** a frame arrives with `event_type = 0xFF`
@@ -225,6 +227,54 @@ Offset  Hex                                          Field
 ```
 
 Total: 36 bytes.
+
+---
+
+### R12. STYLUS_SCROLL Payload
+
+When `event_type == 0x04`, the payload immediately following the 16-byte header MUST be 4 bytes:
+
+| Offset (from payload start) | Size | Type | Field     | Description                                                                               |
+|-----------------------------|------|------|-----------|-------------------------------------------------------------------------------------------|
+| 0                           | 2    | i16  | `delta_x` | Horizontal scroll delta in points. Negative = left, positive = right.                    |
+| 2                           | 2    | i16  | `delta_y` | Vertical scroll delta in points. Negative = up, positive = down (raw direction; receiver applies natural-scroll inversion). |
+
+Total frame size for `STYLUS_SCROLL`: **16 (header) + 4 (payload) = 20 bytes**. Flags byte MUST be `0x00`.
+
+The Android sender applies natural-scroll inversion locally before encoding, so the wire format always carries the effective direction intended by the user setting.
+
+#### Scenario: two-finger drag down
+- **Given** a two-finger drag of 30 pixels downward with natural scroll enabled
+- **When** the Android encoder builds the frame
+- **Then** `event_type = 0x04`, `delta_x = 0`, `delta_y = 30` (positive = down)
+
+---
+
+### R13. STYLUS_ZOOM Payload
+
+When `event_type == 0x05`, the payload immediately following the 16-byte header MUST be 4 bytes:
+
+| Offset (from payload start) | Size | Type | Field         | Description                                                                             |
+|-----------------------------|------|------|---------------|-----------------------------------------------------------------------------------------|
+| 0                           | 4    | f32  | `scale_delta` | Multiplicative zoom factor since last frame. 1.0 = no change. >1.0 = zoom in, <1.0 = zoom out. |
+
+Total frame size for `STYLUS_ZOOM`: **16 (header) + 4 (payload) = 20 bytes**. Flags byte MUST be `0x00`.
+
+#### Scenario: pinch-to-zoom in
+- **Given** a two-finger pinch where the spread grows by 20% in one frame
+- **When** the Android encoder builds the frame
+- **Then** `event_type = 0x05`, `scale_delta = 1.2` (IEEE 754 f32 LE)
+
+---
+
+### R14. Right-Click from Two-Finger Tap
+
+A two-finger tap (both fingers down + up within 150ms with < 12px of cumulative centroid movement) is encoded as a synthetic right-click using the existing `STYLUS_BUTTON` event type (R8). No new event type is introduced.
+
+The sender MUST:
+1. Emit a `STYLUS_MOVE` frame (`event_type = 0x01`) with `x`/`y` = the normalised tap centroid, positioning the macOS cursor at the tap location.
+2. Immediately emit a `STYLUS_BUTTON` frame with `buttons = 0x10` and `flags = 0x10` (BUTTON_SECONDARY down, primary up).
+3. Immediately emit a `STYLUS_BUTTON` frame with `buttons = 0x00` and `flags = 0x00` (release all).
 
 ---
 

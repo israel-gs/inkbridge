@@ -216,6 +216,85 @@ final class InkBridgeServerTests: XCTestCase {
         XCTAssertEqual(server.latency.samples, 6)
     }
 
+    // MARK: - Gesture events (scroll / zoom)
+
+    func testScrollFrameCallsInjectScroll() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let data = try BinaryStylusCodec.encode(
+            .scroll(deltaX: 0, deltaY: 30),
+            flags: 0x00,
+            sequence: 0,
+            timestampNs: 0
+        )
+        let frame = try BinaryStylusCodec.decode(data)
+        udpListener.emit(frame)
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Scroll must NOT appear in inject() calls (it's a different path).
+        XCTAssertEqual(injector.calls.count, 0)
+        XCTAssertEqual(injector.scrollCalls.count, 1)
+        XCTAssertEqual(injector.scrollCalls[0].0, 0)    // deltaX
+        XCTAssertEqual(injector.scrollCalls[0].1, 30)   // deltaY
+    }
+
+    func testZoomFrameCallsInjectZoom() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let data = try BinaryStylusCodec.encode(
+            .zoom(scaleDelta: 1.10),
+            flags: 0x00,
+            sequence: 0,
+            timestampNs: 0
+        )
+        let frame = try BinaryStylusCodec.decode(data)
+        udpListener.emit(frame)
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(injector.calls.count, 0)
+        XCTAssertEqual(injector.zoomCalls.count, 1)
+        XCTAssertEqual(injector.zoomCalls[0], 1.10, accuracy: 1e-6)
+    }
+
+    func testScrollDoesNotUpdateLastPoint() async throws {
+        server.start(port: 4545)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Move to establish a known lastPoint.
+        udpListener.emit(try makeMoveFrame(x: 0.25, y: 0.75))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Emit a scroll — must NOT touch lastPoint.
+        let scrollData = try BinaryStylusCodec.encode(
+            .scroll(deltaX: 5, deltaY: 10),
+            flags: 0x00,
+            sequence: 1,
+            timestampNs: 0
+        )
+        udpListener.emit(try BinaryStylusCodec.decode(scrollData))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // Follow with a button — must still land at the MOVE point, not (0,0).
+        let buttonData = try BinaryStylusCodec.encode(
+            .button(buttons: 0x08),
+            flags: 0x08,
+            sequence: 2,
+            timestampNs: 0
+        )
+        udpListener.emit(try BinaryStylusCodec.decode(buttonData))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        // inject() calls: 1 MOVE + 1 BUTTON (scroll bypasses inject())
+        XCTAssertEqual(injector.calls.count, 2)
+        // Button must land at 0.25 × 1920 = 480, 0.75 × 1080 = 810.
+        XCTAssertEqual(injector.calls[1].1.x, 480, accuracy: 1)
+        XCTAssertEqual(injector.calls[1].1.y, 810, accuracy: 1)
+    }
+
     func testInjectionFailureDoesNotChangeState() async throws {
         server.start(port: 4545)
         try await Task.sleep(nanoseconds: 50_000_000)

@@ -83,6 +83,11 @@ public struct StrokeStateMachine {
 
         case let .proximity(entering):
             return [.proximity(entering: entering)]
+
+        case .scroll, .zoom, .cursorDelta:
+            // Gesture / trackpad events are handled upstream in InkBridgeServer
+            // and do not flow through the stylus state machine. Guard exhaustiveness.
+            return []
         }
     }
 }

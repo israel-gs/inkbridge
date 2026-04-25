@@ -9,7 +9,7 @@ import java.nio.ByteOrder
  * Encodes [StylusEvent] instances to [ByteArray] and decodes [ByteArray] back to [DecodedFrame].
  * Zero Android-API dependencies — runs on any JVM (testable with plain JUnit 5).
  *
- * Wire format reference: openspec/changes/foundation/specs/wire-protocol.md R1–R11.
+ * Wire format reference: openspec/changes/foundation/specs/wire-protocol.md R1–R13.
  *
  * Byte order: little-endian throughout (R1).
  * Header: 16 bytes fixed (R3).
@@ -17,6 +17,8 @@ import java.nio.ByteOrder
  *   STYLUS_MOVE      (0x01) → 20 bytes payload → 36 bytes total (R6)
  *   STYLUS_PROXIMITY (0x02) → 4 bytes payload  → 20 bytes total (R7)
  *   STYLUS_BUTTON    (0x03) → 4 bytes payload  → 20 bytes total (R8)
+ *   STYLUS_SCROLL    (0x04) → 4 bytes payload  → 20 bytes total (R12)
+ *   STYLUS_ZOOM      (0x05) → 4 bytes payload  → 20 bytes total (R13)
  */
 object BinaryStylusCodec {
 
@@ -24,6 +26,7 @@ object BinaryStylusCodec {
     private const val HEADER_SIZE = 16
     private const val MOVE_PAYLOAD_SIZE = 20
     private const val PROX_BUTTON_PAYLOAD_SIZE = 4
+    private const val SCROLL_ZOOM_PAYLOAD_SIZE = 4
 
     // ─────────────────────────────────────────────────────────────
     // Encode
@@ -65,6 +68,21 @@ object BinaryStylusCodec {
                 eventTypeByte = EventType.STYLUS_BUTTON.toByte()
                 payloadSize = PROX_BUTTON_PAYLOAD_SIZE
                 writePayload = { buf -> writeButtonPayload(buf, event) }
+            }
+            is StylusEvent.Scroll -> {
+                eventTypeByte = EventType.STYLUS_SCROLL.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeScrollPayload(buf, event) }
+            }
+            is StylusEvent.Zoom -> {
+                eventTypeByte = EventType.STYLUS_ZOOM.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeZoomPayload(buf, event) }
+            }
+            is StylusEvent.CursorDelta -> {
+                eventTypeByte = EventType.CURSOR_DELTA.toByte()
+                payloadSize = SCROLL_ZOOM_PAYLOAD_SIZE
+                writePayload = { buf -> writeCursorDeltaPayload(buf, event) }
             }
         }
 
@@ -112,6 +130,20 @@ object BinaryStylusCodec {
         buf.put(0x00)                               // offset 17: _pad[0]
         buf.put(0x00)                               // offset 18: _pad[1]
         buf.put(0x00)                               // offset 19: _pad[2]
+    }
+
+    private fun writeScrollPayload(buf: ByteBuffer, event: StylusEvent.Scroll) {
+        buf.putShort(event.deltaX)                  // offset 16–17: delta_x i16 LE
+        buf.putShort(event.deltaY)                  // offset 18–19: delta_y i16 LE
+    }
+
+    private fun writeZoomPayload(buf: ByteBuffer, event: StylusEvent.Zoom) {
+        buf.putFloat(event.scaleDelta)              // offset 16–19: scale_delta f32 LE
+    }
+
+    private fun writeCursorDeltaPayload(buf: ByteBuffer, event: StylusEvent.CursorDelta) {
+        buf.putShort(event.deltaX)                  // offset 16–17: delta_x i16 LE
+        buf.putShort(event.deltaY)                  // offset 18–19: delta_y i16 LE
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -163,6 +195,9 @@ object BinaryStylusCodec {
             EventType.STYLUS_MOVE -> decodeMovePayload(bytes, buf)
             EventType.STYLUS_PROXIMITY -> decodeProximityPayload(bytes, buf)
             EventType.STYLUS_BUTTON -> decodeButtonPayload(bytes, buf, flags)
+            EventType.STYLUS_SCROLL -> decodeScrollPayload(bytes, buf)
+            EventType.STYLUS_ZOOM -> decodeZoomPayload(bytes, buf)
+            EventType.CURSOR_DELTA -> decodeCursorDeltaPayload(bytes, buf)
             else -> throw ProtocolException(
                 "Unknown event_type: 0x${eventType.toString(16).uppercase()}",
             )
@@ -223,5 +258,40 @@ object BinaryStylusCodec {
             )
         }
         return StylusEvent.Button(buttons = buttonsByte)
+    }
+
+    private fun decodeScrollPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Scroll {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException(
+                "STYLUS_SCROLL frame too short: expected at least $required bytes, got ${bytes.size}",
+            )
+        }
+        val deltaX = buf.getShort()   // offset 16–17: delta_x i16 LE
+        val deltaY = buf.getShort()   // offset 18–19: delta_y i16 LE
+        return StylusEvent.Scroll(deltaX = deltaX, deltaY = deltaY)
+    }
+
+    private fun decodeZoomPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.Zoom {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException(
+                "STYLUS_ZOOM frame too short: expected at least $required bytes, got ${bytes.size}",
+            )
+        }
+        val scaleDelta = buf.getFloat()   // offset 16–19: scale_delta f32 LE
+        return StylusEvent.Zoom(scaleDelta = scaleDelta)
+    }
+
+    private fun decodeCursorDeltaPayload(bytes: ByteArray, buf: ByteBuffer): StylusEvent.CursorDelta {
+        val required = HEADER_SIZE + SCROLL_ZOOM_PAYLOAD_SIZE
+        if (bytes.size < required) {
+            throw ProtocolException(
+                "CURSOR_DELTA frame too short: expected at least $required bytes, got ${bytes.size}",
+            )
+        }
+        val deltaX = buf.getShort()
+        val deltaY = buf.getShort()
+        return StylusEvent.CursorDelta(deltaX = deltaX, deltaY = deltaY)
     }
 }

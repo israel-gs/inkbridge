@@ -160,6 +160,9 @@ public final class TCPListener: PacketListener {
             case 0x01: payloadSize = 20   // STYLUS_MOVE
             case 0x02: payloadSize = 4    // STYLUS_PROXIMITY
             case 0x03: payloadSize = 4    // STYLUS_BUTTON
+            case 0x04: payloadSize = 4    // STYLUS_SCROLL (R12)
+            case 0x05: payloadSize = 4    // STYLUS_ZOOM (R13)
+            case 0x06: payloadSize = 4    // CURSOR_DELTA
             default:
                 // Unknown type — cannot determine payload size. Discard entire buffer.
                 errorContinuation.yield(ProtocolError.unknownType(got: eventType))

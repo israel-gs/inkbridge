@@ -27,6 +27,7 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
     val navController = rememberNavController()
     val state by viewModel.connectionState.collectAsState()
     val stats by viewModel.stats.collectAsState()
+    val naturalScroll by viewModel.naturalScroll.collectAsState()
 
     NavHost(navController = navController, startDestination = ROUTE_CONNECTION) {
         composable(ROUTE_CONNECTION) {
@@ -54,6 +55,14 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
                 onMotionEvent = { event, width, height ->
                     viewModel.onMotion(event, width, height)
                 },
+                onGestureEvent = { event, width, height ->
+                    viewModel.onGestureEvent(event, width, height)
+                },
+                onTrackpadEvent = { event, width, height ->
+                    viewModel.onTrackpadEvent(event, width, height)
+                },
+                naturalScroll = naturalScroll,
+                onSetNaturalScroll = { viewModel.setNaturalScroll(it) },
             )
         }
     }

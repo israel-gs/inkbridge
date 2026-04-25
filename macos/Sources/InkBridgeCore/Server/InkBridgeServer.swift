@@ -156,6 +156,56 @@ public final class InkBridgeServer: ObservableObject {
         stats.lastPacketAt = Date()
 
         let event = frame.event
+
+        // Gesture events (scroll/zoom) do NOT update lastPoint — they are directionless
+        // and carry no coordinate. Route them directly to the injector and skip
+        // the coordinate-mapping path entirely.
+        switch event {
+        case let .scroll(deltaX, deltaY):
+            // Extract phase flags (bits 0x40 BEGIN, 0x80 END) from header.flags.
+            let phaseFlags: UInt8 = frame.header.flags & 0xC0
+            do {
+                try injector.injectScroll(deltaX: deltaX, deltaY: deltaY, phaseFlags: phaseFlags)
+            } catch InjectorError.notTrusted {
+                state = .degraded(reason: "Accessibility permission required")
+            } catch {
+                stats.packetsDropped += 1
+            }
+            recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+            return
+
+        case let .zoom(scaleDelta):
+            do {
+                try injector.injectZoom(scaleDelta: scaleDelta)
+            } catch InjectorError.notTrusted {
+                state = .degraded(reason: "Accessibility permission required")
+            } catch {
+                stats.packetsDropped += 1
+            }
+            recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+            return
+
+        case let .cursorDelta(deltaX, deltaY):
+            do {
+                try injector.injectCursorDelta(deltaX: deltaX, deltaY: deltaY)
+            } catch InjectorError.notTrusted {
+                state = .degraded(reason: "Accessibility permission required")
+            } catch {
+                stats.packetsDropped += 1
+            }
+            // Sync the server's lastPoint with the system cursor so a follow-up
+            // BUTTON frame (tap = click) lands where the cursor actually is,
+            // not at the stale lastPoint from the previous stylus session.
+            if let probe = CGEvent(source: nil) {
+                lastPoint = probe.location
+            }
+            recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+            return
+
+        default:
+            break
+        }
+
         // MOVE frames carry coordinates; BUTTON and PROXIMITY reuse the last known
         // position so a click lands where the stylus currently is, not at (0,0).
         let point: CGPoint
@@ -177,11 +227,15 @@ public final class InkBridgeServer: ObservableObject {
             stats.packetsDropped += 1
         }
 
+        recordLatency(arrivalNs: arrivalNs, wireNs: frame.header.timestampNs)
+    }
+
+    private func recordLatency(arrivalNs: UInt64, wireNs: UInt64) {
         // Record latency after inject returns. wireNs comes from the packet header
         // (Android System.nanoTime() — different clock domain; see LatencyTracker docs).
         let injectNs = DispatchTime.now().uptimeNanoseconds
         latencyTracker.record(
-            wireNs: frame.header.timestampNs,
+            wireNs: wireNs,
             arrivalNs: arrivalNs,
             injectNs: injectNs
         )

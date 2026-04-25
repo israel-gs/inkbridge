@@ -38,7 +38,7 @@ import com.inkbridge.ui.theme.CanvasFeedbackGlow
 import com.inkbridge.ui.theme.InkOutline
 
 /**
- * Full-bleed capture surface that intercepts stylus MotionEvents.
+ * Full-bleed capture surface that intercepts stylus and two-finger gesture MotionEvents.
  *
  * Visual design:
  * - Pure OLED-black background.
@@ -48,12 +48,19 @@ import com.inkbridge.ui.theme.InkOutline
  *
  * Active only when [connectionState] is [ConnectionState.Connected] (ui.md R4).
  * No ink rendering — this is a transparent forwarding surface.
+ *
+ * Routing logic:
+ * - 1 pointer with TOOL_TYPE_STYLUS → [onMotionEvent] (existing stylus path).
+ * - Exactly 2 finger pointers (no stylus in contact) → [onGestureEvent].
+ * - Anything else (mixed, 3+ fingers) → ignored.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun CaptureSurface(
     connectionState: ConnectionState,
     onMotionEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit,
+    onGestureEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
+    onTrackpadEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val isActive = connectionState is ConnectionState.Connected
@@ -88,17 +95,50 @@ fun CaptureSurface(
             }
             .pointerInteropFilter { event ->
                 if (!isActive) return@pointerInteropFilter false
-                onMotionEvent(event, viewWidth, viewHeight)
 
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                        feedbackOffset = Offset(event.getX(0), event.getY(0))
-                        feedbackPressure = event.pressure.coerceIn(0f, 1f)
-                        showFeedback = true
+                // Count pointers by category. STYLUS + ERASER → stylus side.
+                // Everything else (FINGER, UNKNOWN, MOUSE) → finger side.
+                var stylusCount = 0
+                for (i in 0 until event.pointerCount) {
+                    val t = event.getToolType(i)
+                    if (t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER) {
+                        stylusCount++
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                }
+                val fingerCount = event.pointerCount - stylusCount
+
+                // Routing:
+                // - 1 stylus alone → existing stylus path (preserves S Pen fidelity).
+                // - 2 fingers alone → gesture path.
+                // - 1 finger alone → CLAIM (return true) but don't dispatch. This keeps the
+                //   input stream alive so the upcoming 2nd-finger ACTION_POINTER_DOWN actually
+                //   reaches us. If we returned false here, Android would route subsequent
+                //   pointer events elsewhere and the gesture would never start.
+                // - Anything else (mixed, 3+ fingers) → ignore (return false).
+                when {
+                    stylusCount == 1 && fingerCount == 0 -> {
+                        onMotionEvent(event, viewWidth, viewHeight)
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                                feedbackOffset = Offset(event.getX(0), event.getY(0))
+                                feedbackPressure = event.pressure.coerceIn(0f, 1f)
+                                showFeedback = true
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                showFeedback = false
+                            }
+                        }
+                    }
+                    fingerCount == 2 && stylusCount == 0 -> {
+                        onGestureEvent(event, viewWidth, viewHeight)
                         showFeedback = false
                     }
+                    fingerCount == 1 && stylusCount == 0 -> {
+                        // Trackpad mode: drag → cursor delta, quick tap → primary click.
+                        onTrackpadEvent(event, viewWidth, viewHeight)
+                        showFeedback = false
+                    }
+                    else -> return@pointerInteropFilter false
                 }
                 true
             },

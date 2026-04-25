@@ -99,6 +99,42 @@ class StreamStylus(
         sendOrDrop(bytes)
     }
 
+    override suspend fun emitScroll(deltaX: Short, deltaY: Short, phaseFlags: UByte, timestampNs: Long) {
+        val event = StylusEvent.Scroll(deltaX = deltaX, deltaY = deltaY)
+        val seq = nextSequence()
+        val bytes = BinaryStylusCodec.encode(
+            event = event,
+            flags = phaseFlags,
+            sequence = seq,
+            timestampNs = timestampNs.toULong(),
+        )
+        sendOrDrop(bytes)
+    }
+
+    override suspend fun emitZoom(scaleDelta: Float, timestampNs: Long) {
+        val event = StylusEvent.Zoom(scaleDelta = scaleDelta)
+        val seq = nextSequence()
+        val bytes = BinaryStylusCodec.encode(
+            event = event,
+            flags = 0x00u,
+            sequence = seq,
+            timestampNs = timestampNs.toULong(),
+        )
+        sendOrDrop(bytes)
+    }
+
+    override suspend fun emitCursorDelta(deltaX: Short, deltaY: Short, timestampNs: Long) {
+        val event = StylusEvent.CursorDelta(deltaX = deltaX, deltaY = deltaY)
+        val seq = nextSequence()
+        val bytes = BinaryStylusCodec.encode(
+            event = event,
+            flags = 0x00u,
+            sequence = seq,
+            timestampNs = timestampNs.toULong(),
+        )
+        sendOrDrop(bytes)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Private
     // ─────────────────────────────────────────────────────────────────────────

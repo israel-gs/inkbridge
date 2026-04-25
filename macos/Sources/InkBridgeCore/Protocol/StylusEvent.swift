@@ -48,6 +48,9 @@ public enum EventTypeValue {
     public static let stylusMove: UInt8      = 0x01
     public static let stylusProximity: UInt8 = 0x02
     public static let stylusButton: UInt8    = 0x03
+    public static let stylusScroll: UInt8    = 0x04
+    public static let stylusZoom: UInt8      = 0x05
+    public static let cursorDelta: UInt8     = 0x06
 }
 
 /// Structured representation of a stylus event decoded from the wire format.
@@ -75,6 +78,23 @@ public enum StylusEvent: Equatable, Sendable {
     ///
     /// - buttons: Bitfield mirroring bits 3–4 of the header flags byte.
     case button(buttons: UInt8)
+
+    /// STYLUS_SCROLL (event_type = 0x04) — two-finger drag gesture scroll delta.
+    /// Payload: 4 bytes. Total frame: 20 bytes.
+    ///
+    /// - deltaX: Horizontal scroll delta in points (negative = left, positive = right).
+    /// - deltaY: Vertical scroll delta in points (negative = up, positive = down).
+    case scroll(deltaX: Int16, deltaY: Int16)
+
+    /// STYLUS_ZOOM (event_type = 0x05) — two-finger pinch gesture zoom delta.
+    /// Payload: 4 bytes. Total frame: 20 bytes.
+    ///
+    /// - scaleDelta: Multiplicative zoom delta since last frame. 1.0 = no change.
+    case zoom(scaleDelta: Float)
+
+    /// CURSOR_DELTA (event_type = 0x06) — single-finger relative cursor movement (trackpad).
+    /// Payload: 4 bytes. Total frame: 20 bytes.
+    case cursorDelta(deltaX: Int16, deltaY: Int16)
 }
 
 /// A successfully decoded wire frame.

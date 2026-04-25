@@ -5,7 +5,7 @@ import Foundation
 /// Encodes ``StylusEvent`` instances to `Data` and decodes `Data` back to ``DecodedFrame``.
 /// Zero external dependencies — uses only raw byte manipulation via `Data` subscripting.
 ///
-/// Wire format reference: openspec/changes/foundation/specs/wire-protocol.md R1–R11.
+/// Wire format reference: openspec/changes/foundation/specs/wire-protocol.md R1–R13.
 ///
 /// Byte order: little-endian throughout (R1).
 /// Header: 16 bytes fixed (R3).
@@ -13,6 +13,8 @@ import Foundation
 ///   STYLUS_MOVE      (0x01) → 20 bytes payload → 36 bytes total (R6)
 ///   STYLUS_PROXIMITY (0x02) → 4 bytes payload  → 20 bytes total (R7)
 ///   STYLUS_BUTTON    (0x03) → 4 bytes payload  → 20 bytes total (R8)
+///   STYLUS_SCROLL    (0x04) → 4 bytes payload  → 20 bytes total (R12)
+///   STYLUS_ZOOM      (0x05) → 4 bytes payload  → 20 bytes total (R13)
 public struct BinaryStylusCodec {
 
     public init() {}
@@ -21,6 +23,7 @@ public struct BinaryStylusCodec {
     private static let headerSize = 16
     private static let movePayloadSize = 20
     private static let proxButtonPayloadSize = 4
+    private static let scrollZoomPayloadSize = 4
 
     // ─────────────────────────────────────────────────────────────
     // Encode
@@ -65,6 +68,24 @@ public struct BinaryStylusCodec {
             payloadSize = proxButtonPayloadSize
             payloadWriter = { data in
                 writeButtonPayload(into: &data, buttons: buttons)
+            }
+        case let .scroll(deltaX, deltaY):
+            eventType = EventTypeValue.stylusScroll
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeScrollPayload(into: &data, deltaX: deltaX, deltaY: deltaY)
+            }
+        case let .zoom(scaleDelta):
+            eventType = EventTypeValue.stylusZoom
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeZoomPayload(into: &data, scaleDelta: scaleDelta)
+            }
+        case let .cursorDelta(deltaX, deltaY):
+            eventType = EventTypeValue.cursorDelta
+            payloadSize = scrollZoomPayloadSize
+            payloadWriter = { data in
+                writeScrollPayload(into: &data, deltaX: deltaX, deltaY: deltaY)
             }
         }
 
@@ -123,6 +144,15 @@ public struct BinaryStylusCodec {
         data.append(0x00)     // offset 19: _pad[2]
     }
 
+    private static func writeScrollPayload(into data: inout Data, deltaX: Int16, deltaY: Int16) {
+        data.appendLE(deltaX)   // offset 16–17: delta_x i16 LE
+        data.appendLE(deltaY)   // offset 18–19: delta_y i16 LE
+    }
+
+    private static func writeZoomPayload(into data: inout Data, scaleDelta: Float) {
+        data.appendLE(scaleDelta)  // offset 16–19: scale_delta f32 LE
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Decode
     // ─────────────────────────────────────────────────────────────
@@ -171,6 +201,12 @@ public struct BinaryStylusCodec {
             event = try decodeProximityPayload(data: data, cursor: &cursor)
         case EventTypeValue.stylusButton:
             event = try decodeButtonPayload(data: data, cursor: &cursor, flags: flags)
+        case EventTypeValue.stylusScroll:
+            event = try decodeScrollPayload(data: data, cursor: &cursor)
+        case EventTypeValue.stylusZoom:
+            event = try decodeZoomPayload(data: data, cursor: &cursor)
+        case EventTypeValue.cursorDelta:
+            event = try decodeCursorDeltaPayload(data: data, cursor: &cursor)
         default:
             throw ProtocolError.unknownType(got: eventType)
         }
@@ -220,6 +256,32 @@ public struct BinaryStylusCodec {
             throw ProtocolError.buttonsInconsistentWithFlags(buttons: buttons, flagsBits34: flagsBits34)
         }
         return .button(buttons: buttons)
+    }
+
+    private static func decodeScrollPayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+
+        let deltaX = data.readLE(Int16.self, at: &cursor)   // offset 16–17: delta_x i16 LE
+        let deltaY = data.readLE(Int16.self, at: &cursor)   // offset 18–19: delta_y i16 LE
+        return .scroll(deltaX: deltaX, deltaY: deltaY)
+    }
+
+    private static func decodeZoomPayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+
+        let scaleDelta = data.readLE(Float.self, at: &cursor)  // offset 16–19: scale_delta f32 LE
+        return .zoom(scaleDelta: scaleDelta)
+    }
+
+    private static func decodeCursorDeltaPayload(data: Data, cursor: inout Data.Index) throws -> StylusEvent {
+        let required = headerSize + scrollZoomPayloadSize
+        guard data.count >= required else { throw ProtocolError.truncated }
+
+        let deltaX = data.readLE(Int16.self, at: &cursor)
+        let deltaY = data.readLE(Int16.self, at: &cursor)
+        return .cursorDelta(deltaX: deltaX, deltaY: deltaY)
     }
 }
 

@@ -240,6 +240,102 @@ final class BinaryStylusCodecTests: XCTestCase {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // STYLUS_SCROLL (R12) — decode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    func testDecodeScrollDownVector() throws {
+        // Vector: scroll-down.hex
+        // version=1, event_type=0x04, flags=0x00, sequence=0, timestamp_ns=0
+        // delta_x=0, delta_y=30
+        let data = try loadVector(named: "scroll-down.hex")
+        XCTAssertEqual(data.count, 20, "STYLUS_SCROLL frame must be 20 bytes")
+
+        let frame = try BinaryStylusCodec.decode(data)
+
+        XCTAssertEqual(frame.header.version, 1)
+        XCTAssertEqual(frame.header.eventType, EventTypeValue.stylusScroll)
+        XCTAssertEqual(frame.header.flags, 0x00)
+        XCTAssertEqual(frame.header.sequence, 0)
+        XCTAssertEqual(frame.header.timestampNs, 0)
+
+        guard case let .scroll(deltaX, deltaY) = frame.event else {
+            XCTFail("Expected StylusEvent.scroll, got \(frame.event)")
+            return
+        }
+        XCTAssertEqual(deltaX, 0)
+        XCTAssertEqual(deltaY, 30)
+    }
+
+    func testRoundtripScroll() throws {
+        let event = StylusEvent.scroll(deltaX: 10, deltaY: -20)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 5, timestampNs: 1_000)
+        XCTAssertEqual(encoded.count, 20)
+
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .scroll(deltaX, deltaY) = decoded.event else {
+            XCTFail("Expected .scroll")
+            return
+        }
+        XCTAssertEqual(deltaX, 10)
+        XCTAssertEqual(deltaY, -20)
+        XCTAssertEqual(decoded.header.sequence, 5)
+    }
+
+    func testEncodeScrollByteForByteEquality() throws {
+        let expected = try loadVector(named: "scroll-down.hex")
+        let event = StylusEvent.scroll(deltaX: 0, deltaY: 30)
+
+        let actual = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        XCTAssertEqual(actual, expected)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STYLUS_ZOOM (R13) — decode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    func testDecodeZoomInVector() throws {
+        // Vector: zoom-in.hex
+        // version=1, event_type=0x05, flags=0x00, sequence=0, timestamp_ns=0
+        // scale_delta=1.10 (f32 LE)
+        let data = try loadVector(named: "zoom-in.hex")
+        XCTAssertEqual(data.count, 20, "STYLUS_ZOOM frame must be 20 bytes")
+
+        let frame = try BinaryStylusCodec.decode(data)
+
+        XCTAssertEqual(frame.header.version, 1)
+        XCTAssertEqual(frame.header.eventType, EventTypeValue.stylusZoom)
+        XCTAssertEqual(frame.header.flags, 0x00)
+
+        guard case let .zoom(scaleDelta) = frame.event else {
+            XCTFail("Expected StylusEvent.zoom, got \(frame.event)")
+            return
+        }
+        XCTAssertEqual(scaleDelta, 1.10, accuracy: 1e-6)
+    }
+
+    func testRoundtripZoom() throws {
+        let event = StylusEvent.zoom(scaleDelta: 1.25)
+        let encoded = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 3, timestampNs: 500)
+        XCTAssertEqual(encoded.count, 20)
+
+        let decoded = try BinaryStylusCodec.decode(encoded)
+        guard case let .zoom(scaleDelta) = decoded.event else {
+            XCTFail("Expected .zoom")
+            return
+        }
+        XCTAssertEqual(scaleDelta, 1.25, accuracy: 1e-6)
+        XCTAssertEqual(decoded.header.sequence, 3)
+    }
+
+    func testEncodeZoomByteForByteEquality() throws {
+        let expected = try loadVector(named: "zoom-in.hex")
+        let event = StylusEvent.zoom(scaleDelta: 1.10)
+
+        let actual = try BinaryStylusCodec.encode(event, flags: 0x00, sequence: 0, timestampNs: 0)
+        XCTAssertEqual(actual, expected)
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Error / discard tests (R2, R4, R8)
     // ─────────────────────────────────────────────────────────────
 

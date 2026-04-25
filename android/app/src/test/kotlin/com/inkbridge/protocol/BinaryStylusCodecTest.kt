@@ -246,6 +246,96 @@ class BinaryStylusCodecTest {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // STYLUS_SCROLL (R12) — encode, decode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode scroll-down vector matches expected StylusEvent Scroll`() {
+        // Vector: scroll-down.hex
+        // version=1, event_type=0x04, flags=0x00, sequence=0, timestamp_ns=0
+        // delta_x=0, delta_y=30
+        val bytes = loadVector("scroll-down.hex")
+        assertEquals(20, bytes.size, "STYLUS_SCROLL frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_SCROLL, frame.header.eventType)
+        assertEquals(0x00u.toUByte(), frame.header.flags)
+        assertEquals(0u, frame.header.sequence)
+        assertEquals(0uL, frame.header.timestampNs)
+
+        val scroll = assertInstanceOf(StylusEvent.Scroll::class.java, frame.event)
+        assertEquals(0.toShort(), scroll.deltaX)
+        assertEquals(30.toShort(), scroll.deltaY)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Scroll`() {
+        val event = StylusEvent.Scroll(deltaX = 10, deltaY = -20)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 5u, timestampNs = 1_000uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val scroll = assertInstanceOf(StylusEvent.Scroll::class.java, decoded.event)
+        assertEquals(10.toShort(), scroll.deltaX)
+        assertEquals((-20).toShort(), scroll.deltaY)
+        assertEquals(5u, decoded.header.sequence)
+    }
+
+    @Test
+    fun `encode STYLUS_SCROLL produces byte-for-byte match with scroll-down vector`() {
+        val expected = loadVector("scroll-down.hex")
+        val event = StylusEvent.Scroll(deltaX = 0, deltaY = 30)
+
+        val actual = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STYLUS_ZOOM (R13) — encode, decode, roundtrip, vector
+    // ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `decode zoom-in vector matches expected StylusEvent Zoom`() {
+        // Vector: zoom-in.hex
+        // version=1, event_type=0x05, flags=0x00, sequence=0, timestamp_ns=0
+        // scale_delta=1.10 (f32 LE)
+        val bytes = loadVector("zoom-in.hex")
+        assertEquals(20, bytes.size, "STYLUS_ZOOM frame must be 20 bytes")
+
+        val frame = codec.decode(bytes)
+
+        assertEquals(1u.toUByte(), frame.header.version)
+        assertEquals(EventType.STYLUS_ZOOM, frame.header.eventType)
+        assertEquals(0x00u.toUByte(), frame.header.flags)
+
+        val zoom = assertInstanceOf(StylusEvent.Zoom::class.java, frame.event)
+        assertEquals(1.10f, zoom.scaleDelta, 1e-6f)
+    }
+
+    @Test
+    fun `encode then decode roundtrip for StylusEvent Zoom`() {
+        val event = StylusEvent.Zoom(scaleDelta = 1.25f)
+        val encoded = codec.encode(event, flags = 0x00u, sequence = 3u, timestampNs = 500uL)
+        assertEquals(20, encoded.size)
+
+        val decoded = codec.decode(encoded)
+        val zoom = assertInstanceOf(StylusEvent.Zoom::class.java, decoded.event)
+        assertEquals(1.25f, zoom.scaleDelta, 1e-6f)
+        assertEquals(3u, decoded.header.sequence)
+    }
+
+    @Test
+    fun `encode STYLUS_ZOOM produces byte-for-byte match with zoom-in vector`() {
+        val expected = loadVector("zoom-in.hex")
+        val event = StylusEvent.Zoom(scaleDelta = 1.10f)
+
+        val actual = codec.encode(event, flags = 0x00u, sequence = 0u, timestampNs = 0uL)
+        assertArrayEquals(expected, actual)
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Error / discard tests (R2, R4, R8)
     // ─────────────────────────────────────────────────────────────
 

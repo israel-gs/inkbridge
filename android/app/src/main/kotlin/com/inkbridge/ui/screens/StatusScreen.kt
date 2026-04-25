@@ -21,15 +21,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,27 +51,40 @@ import androidx.compose.ui.unit.dp
 import com.inkbridge.app.ui.theme.InkBridgeTheme
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.TransportKind
+import kotlinx.coroutines.launch
 
 /**
  * Status screen — shown while [ConnectionState.Connected] or [ConnectionState.Error].
  *
  * Canvas-first layout:
  * - Slim top bar with wordmark, transport chip (with pulsing dot when connected),
- *   and disconnect action.
+ *   gear icon to open settings, and disconnect action.
  * - Error banner (only when errored).
  * - Full-bleed [CaptureSurface] occupies the rest of the screen.
+ * - [ModalBottomSheet] for gesture settings (natural-scroll toggle).
  *
  * @param stats Kept in the signature for API stability but no longer rendered —
  *              the transport label is read from the chip via state.
+ * @param naturalScroll Current natural-scroll setting. True = fingers-direction (macOS default).
+ * @param onSetNaturalScroll Callback to persist a natural-scroll change.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusScreen(
     connectionState: ConnectionState,
     stats: ConnectionViewModel.Stats,
     onDisconnect: () -> Unit,
     onMotionEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit,
+    onGestureEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
+    onTrackpadEvent: (event: MotionEvent, viewWidth: Int, viewHeight: Int) -> Unit = { _, _, _ -> },
+    naturalScroll: Boolean = true,
+    onSetNaturalScroll: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    var showSettings by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -71,6 +94,7 @@ fun StatusScreen(
             transportLabel = stats.transportLabel,
             connectionState = connectionState,
             onDisconnect = onDisconnect,
+            onOpenSettings = { showSettings = true },
         )
 
         if (connectionState is ConnectionState.Error) {
@@ -80,10 +104,29 @@ fun StatusScreen(
         CaptureSurface(
             connectionState = connectionState,
             onMotionEvent = onMotionEvent,
+            onGestureEvent = onGestureEvent,
+            onTrackpadEvent = onTrackpadEvent,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
         )
+    }
+
+    if (showSettings) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettings = false },
+            sheetState = sheetState,
+        ) {
+            SettingsSheet(
+                naturalScroll = naturalScroll,
+                onNaturalScrollChange = { enabled ->
+                    onSetNaturalScroll(enabled)
+                    scope.launch { sheetState.hide() }.invokeOnCompletion {
+                        if (!sheetState.isVisible) showSettings = false
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -94,6 +137,7 @@ private fun TopBar(
     transportLabel: String,
     connectionState: ConnectionState,
     onDisconnect: () -> Unit,
+    onOpenSettings: () -> Unit = {},
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -123,6 +167,17 @@ private fun TopBar(
             connectionState = connectionState,
         )
         Spacer(Modifier.weight(1f))
+
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = "Settings",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         IconButton(
             onClick = onDisconnect,
@@ -223,6 +278,61 @@ private fun PulsingDot(color: Color, pulse: Boolean) {
                 .clip(CircleShape)
                 .background(color),
         )
+    }
+}
+
+// ── Settings sheet ───────────────────────────────────────────────────────────
+
+/**
+ * Content of the gesture-settings bottom sheet.
+ *
+ * Currently exposes a single "Natural scrolling" toggle. Additional settings
+ * can be added as rows below the divider.
+ */
+@Composable
+private fun SettingsSheet(
+    naturalScroll: Boolean,
+    onNaturalScrollChange: (Boolean) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 32.dp),
+    ) {
+        Text(
+            text = "Gesture Settings",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 12.dp),
+        )
+        HorizontalDivider()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Natural scrolling",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "Two-finger drag scrolls in the same direction your fingers move.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = naturalScroll,
+                onCheckedChange = onNaturalScrollChange,
+            )
+        }
     }
 }
 
