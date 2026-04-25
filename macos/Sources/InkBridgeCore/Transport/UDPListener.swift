@@ -26,7 +26,25 @@ public final class UDPListener: PacketListener {
 
     /// Last accepted sequence number per remote endpoint (keyed by description string).
     /// Protects against out-of-order datagrams per wire-protocol.md R9.
+    ///
+    /// Bug 5 fix:
+    /// - Access is serialised by [sequenceLock] (NSLock) — NWConnection callbacks
+    ///   fire on `.global(qos: .userInteractive)` which is multi-threaded.
+    /// - Capped at [maxEndpoints] entries with LRU eviction (insertion-order list)
+    ///   to prevent unbounded growth as ephemeral source ports churn.
     private var lastSequence: [String: UInt32] = [:]
+
+    /// Ordered list of endpoint keys from oldest to newest insertion.
+    /// Used for LRU eviction when [lastSequence] exceeds [maxEndpoints].
+    private var endpointOrder: [String] = []
+
+    /// Maximum number of endpoints tracked. Chosen conservatively — a real
+    /// deployment uses a single Android sender; 32 handles any reasonable burst
+    /// of reconnects / port changes without unbounded growth.
+    private let maxEndpoints = 32
+
+    /// Serialises read/write access to [lastSequence] and [endpointOrder].
+    private let sequenceLock = NSLock()
 
     // MARK: - Init
 
@@ -125,16 +143,32 @@ public final class UDPListener: PacketListener {
             let frame = try BinaryStylusCodec.decode(data)
             let endpointKey = "\(connection.endpoint)"
 
-            // Out-of-order drop per wire-protocol.md R9.
+            // Bug 5 fix: serialise lastSequence access under a lock.
+            // NWConnection callbacks run on a concurrent global queue, so without
+            // synchronisation concurrent decode calls race on the dictionary.
+            var shouldDrop = false
+            sequenceLock.lock()
             if let last = lastSequence[endpointKey] {
                 let seq = frame.header.sequence
                 // Handle sequence wrap (R9 scenario): treat 0 after 0xFFFFFFFF as valid.
                 if last != UInt32.max, seq < last {
-                    // Stale — discard silently.
-                    return
+                    shouldDrop = true
                 }
             }
-            lastSequence[endpointKey] = frame.header.sequence
+            if !shouldDrop {
+                // Update LRU order: move key to end (most recently used).
+                endpointOrder.removeAll { $0 == endpointKey }
+                endpointOrder.append(endpointKey)
+                lastSequence[endpointKey] = frame.header.sequence
+                // LRU eviction: drop the oldest entry when over the cap.
+                if endpointOrder.count > maxEndpoints {
+                    let evict = endpointOrder.removeFirst()
+                    lastSequence.removeValue(forKey: evict)
+                }
+            }
+            sequenceLock.unlock()
+
+            if shouldDrop { return }
             frameContinuation.yield(frame)
         } catch {
             errorContinuation.yield(error)

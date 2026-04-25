@@ -66,6 +66,14 @@ public final class CGEventInjector: Injector {
     /// Tracks the in-flight momentum simulation task so a fresh gesture can cancel it.
     private var momentumTask: Task<Void, Never>?
 
+    /// Monotonically increasing generation counter. Incremented each time a new
+    /// gesture begins. The momentum task captures its generation at creation and
+    /// exits if the generation changes — this is the Bug 6 fix for the race where
+    /// Task.cancel() is cooperative (checked only between sleeps) but a new gesture
+    /// may have already posted its first scroll event. The generation check guards
+    /// the postScrollEvent call BEFORE the sleep, not just after.
+    private var momentumGeneration: UInt64 = 0
+
     public func injectScroll(deltaX: Int16, deltaY: Int16, phaseFlags: UInt8) throws {
         // Decode phase flags from the wire.
         // 0x40 = SCROLL_BEGIN, 0x80 = SCROLL_END, 0x00 = changed (default).
@@ -81,7 +89,12 @@ public final class CGEventInjector: Injector {
         }
 
         // A new gesture start cancels any in-flight momentum from a previous one.
+        // Bug 6 fix: increment generation counter so the momentum task's guard
+        // check (inside startMomentumDecay) fires immediately on the NEXT loop
+        // iteration, even before Task.sleep returns. This closes the race window
+        // where cancel() is cooperative (only checked between sleeps).
         if scrollPhase == 1 {
+            momentumGeneration &+= 1
             momentumTask?.cancel()
             momentumTask = nil
         }
@@ -121,6 +134,43 @@ public final class CGEventInjector: Injector {
         scrollEvent.post(tap: .cgSessionEventTap)
     }
 
+    /// Pure function: computes the momentum decay sequence for a given initial velocity.
+    ///
+    /// Extracted for testability — no Task, no CGEvent, no side effects.
+    /// Returns the sequence of (cappedX, cappedY) deltas the decay loop would post,
+    /// starting from the began frame and stopping when magnitude drops below 0.5px.
+    ///
+    /// - Parameters:
+    ///   - initialDeltaX: Horizontal velocity at lift-off.
+    ///   - initialDeltaY: Vertical velocity at lift-off.
+    ///   - maxFrames: Maximum frames (default 80, ~1.3s at 60Hz).
+    /// - Returns: Array of (Int16, Int16) deltas in emission order. Empty if absMag < 10.
+    static func momentumDeltas(
+        initialDeltaX: Int16,
+        initialDeltaY: Int16,
+        maxFrames: Int = 80
+    ) -> [(Int16, Int16)] {
+        let absMag = abs(Int(initialDeltaX)) + abs(Int(initialDeltaY))
+        guard absMag >= 10 else { return [] }
+
+        var dx = Float(initialDeltaX)
+        var dy = Float(initialDeltaY)
+        let decayPerFrame: Float = 0.93
+        var result: [(Int16, Int16)] = []
+        // Began frame.
+        result.append((Int16(dx.rounded().clamped(to: Float(Int16.min)...Float(Int16.max))),
+                       Int16(dy.rounded().clamped(to: Float(Int16.min)...Float(Int16.max)))))
+        for _ in 0..<maxFrames {
+            dx *= decayPerFrame
+            dy *= decayPerFrame
+            if abs(dx) < 0.5 && abs(dy) < 0.5 { break }
+            let cappedX = Int16(dx.rounded().clamped(to: Float(Int16.min)...Float(Int16.max)))
+            let cappedY = Int16(dy.rounded().clamped(to: Float(Int16.min)...Float(Int16.max)))
+            result.append((cappedX, cappedY))
+        }
+        return result
+    }
+
     /// Simulates Magic Trackpad inertia by emitting decaying scroll events tagged
     /// with kCGScrollWheelEventMomentumPhase. Decays exponentially until below
     /// 0.5px/frame or 1.2s elapsed.
@@ -137,27 +187,40 @@ public final class CGEventInjector: Injector {
         let frameNs: UInt64 = 16_000_000    // ~60Hz
         let maxFrames = 80                  // ~1.3s of momentum
 
+        // Capture the generation at the point this decay task starts.
+        // Any new gesture increments momentumGeneration before cancelling this task,
+        // so the guard below fires at the top of each loop body — before postScrollEvent
+        // — not just after the sleep. This eliminates the up-to-16ms overlap window.
+        let myGeneration = momentumGeneration
+
         momentumTask = Task { [weak self] in
-            // Began phase.
+            guard let self else { return }
+            // Began phase — guard before posting.
+            guard !Task.isCancelled, self.momentumGeneration == myGeneration else { return }
             do {
-                try self?.postScrollEvent(deltaX: Int16(dx), deltaY: Int16(dy), phase: 0, momentumPhase: 1)
+                try self.postScrollEvent(deltaX: Int16(dx), deltaY: Int16(dy), phase: 0, momentumPhase: 1)
             } catch { return }
 
             for _ in 0..<maxFrames {
-                if Task.isCancelled { return }
                 try? await Task.sleep(nanoseconds: frameNs)
+                // Bug 6 fix: check BEFORE posting (not just after sleep).
+                // cancel() is cooperative and only flips isCancelled between suspension
+                // points. The generation check catches the cancel synchronously.
+                guard !Task.isCancelled, self.momentumGeneration == myGeneration else { return }
                 dx *= decayPerFrame
                 dy *= decayPerFrame
                 if abs(dx) < 0.5 && abs(dy) < 0.5 { break }
                 let cappedX = Int16(dx.rounded().clamped(to: Float(Int16.min)...Float(Int16.max)))
                 let cappedY = Int16(dy.rounded().clamped(to: Float(Int16.min)...Float(Int16.max)))
                 do {
-                    try self?.postScrollEvent(deltaX: cappedX, deltaY: cappedY, phase: 0, momentumPhase: 2)
+                    try self.postScrollEvent(deltaX: cappedX, deltaY: cappedY, phase: 0, momentumPhase: 2)
                 } catch { return }
             }
 
             // Ended phase — zero delta, momentumPhase=ended.
-            try? self?.postScrollEvent(deltaX: 0, deltaY: 0, phase: 0, momentumPhase: 4)
+            // Guard again: don't post the END frame if we were superseded.
+            guard !Task.isCancelled, self.momentumGeneration == myGeneration else { return }
+            try? self.postScrollEvent(deltaX: 0, deltaY: 0, phase: 0, momentumPhase: 4)
         }
     }
 
@@ -236,7 +299,10 @@ public final class CGEventInjector: Injector {
     // MARK: - Stylus injection
 
     public func inject(_ event: StylusEvent, at point: CGPoint) throws {
-        isTrusted = AXIsProcessTrustedWithOptions(nil)
+        // Bug 7 fix: do NOT call AXIsProcessTrustedWithOptions on every frame.
+        // At 240 Hz that's 240 syscalls/sec on MainActor, inflating p99 latency.
+        // ServerViewModel already polls refreshTrust() every 1s, which updates
+        // the cached `isTrusted` field. Use that cached value here.
         guard isTrusted else {
             throw InjectorError.notTrusted
         }
@@ -246,32 +312,43 @@ public final class CGEventInjector: Injector {
         // pressure/tilt recognition on a prior proximity-enter with valid
         // vendor + capability metadata. We synthesise one lazily on the first
         // event if Android did not send a STYLUS_PROXIMITY enter frame.
-        stateLock.lock()
-        let needsImplicitProximity = !proximityEntered && !isProximityEvent(event)
-        stateLock.unlock()
+        //
+        // Bug 8 fix: the previous two-lock check-then-set was a TOCTOU race —
+        // two concurrent inject() calls could both observe !proximityEntered and
+        // both fire postProximity(entering: true). Fix: atomically reserve the slot
+        // under a single lock, then post outside the lock. If posting throws, undo
+        // the reservation under the lock so the next call can retry.
+        let needsImplicitProximity: Bool = stateLock.withLock {
+            if !proximityEntered && !isProximityEvent(event) {
+                proximityEntered = true   // reserve the slot atomically
+                return true
+            }
+            return false
+        }
         if needsImplicitProximity {
-            try postProximity(entering: true)
-            stateLock.lock()
-            proximityEntered = true
-            stateLock.unlock()
+            do {
+                try postProximity(entering: true)
+            } catch let postError {
+                // Undo the reservation so the next inject() can retry.
+                stateLock.lock()
+                proximityEntered = false
+                stateLock.unlock()
+                throw postError
+            }
         }
 
         // Route the event through the state machine under a lock so concurrent
         // transport callbacks produce a consistent down/dragged/up sequence.
-        let actions: [StrokeAction] = {
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return stateMachine.process(event, at: point)
-        }()
+        let actions: [StrokeAction] = stateLock.withLock {
+            stateMachine.process(event, at: point)
+        }
 
         for action in actions {
             try post(action)
         }
 
         if case let .proximity(entering) = event {
-            stateLock.lock()
-            proximityEntered = entering
-            stateLock.unlock()
+            stateLock.withLock { proximityEntered = entering }
         }
     }
 

@@ -22,10 +22,30 @@ import java.util.concurrent.atomic.AtomicInteger
  * Start at 0; increment for every frame successfully encoded.
  *
  * Dropped frames (when [transport] is null or send fails) are counted in [droppedCount].
+ *
+ * ## Reconnect semantics
+ *
+ * A single [StreamStylus] instance lives for the ViewModel's lifetime.
+ * [transport] is a volatile field — mutated on connect/disconnect — so counters
+ * survive across reconnections and in-flight emissions always see the latest
+ * transport reference (Bug 3 / Bug 4 fix).
  */
 class StreamStylus(
-    private val transport: StylusTransport?,
+    transport: StylusTransport?,
 ) : StylusSink {
+
+    /**
+     * The active transport. [Volatile] so that a transport swap in [swapTransport]
+     * is immediately visible to any coroutine calling [sendOrDrop].
+     */
+    @Volatile
+    var transport: StylusTransport? = transport
+        private set
+
+    /** Replaces the active transport atomically. Call before marking state Connected. */
+    fun swapTransport(newTransport: StylusTransport?) {
+        transport = newTransport
+    }
 
     private val sequence = AtomicInteger(0)
 

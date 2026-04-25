@@ -6,6 +6,12 @@ import CoreGraphics
 /// is the only type that imports CoreGraphics. All domain code depends
 /// on this protocol only.
 public protocol Injector: AnyObject {
+    /// Re-evaluates Accessibility trust and updates the internal cached field.
+    ///
+    /// Bug 7 fix: [CGEventInjector.inject] no longer calls AXIsProcessTrustedWithOptions
+    /// on every frame. Callers (ServerViewModel) must periodically call this method
+    /// to keep the cached trust value current. Default implementation is a no-op.
+    func refreshTrust()
     /// Inject a decoded stylus event at the given display-space point.
     ///
     /// - Parameters:
@@ -38,6 +44,11 @@ public protocol Injector: AnyObject {
     ///   - deltaY: Vertical cursor delta in points (negative = up).
     /// - Throws: ``InjectorError`` if the event cannot be injected.
     func injectCursorDelta(deltaX: Int16, deltaY: Int16) throws
+}
+
+/// Default no-op implementations so existing conformers need not change.
+public extension Injector {
+    func refreshTrust() {}
 }
 
 /// Errors thrown by ``Injector`` implementations.

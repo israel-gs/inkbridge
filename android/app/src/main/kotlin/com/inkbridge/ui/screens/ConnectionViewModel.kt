@@ -14,10 +14,11 @@ import com.inkbridge.data.connection.ConnectionManager
 import com.inkbridge.data.settings.SettingsRepository
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusSample
+import com.inkbridge.domain.model.StylusSink
 import com.inkbridge.domain.model.TransportKind
 import com.inkbridge.domain.usecase.StreamStylus
-import kotlin.math.sqrt
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
+import kotlin.coroutines.CoroutineContext
 
 /**
  * ViewModel for [ConnectionScreen] and [StatusScreen].
@@ -33,16 +36,15 @@ import kotlinx.coroutines.launch
  *
  * Manual DI: instantiated via [Factory] in [MainActivity]. No Hilt in this change.
  *
- * ## Hot-path design
+ * ## Hot-path design (Bug 1 fix)
  *
- * [onMotion] is called on the Compose pointer-input thread at 100–240 Hz. Routing
- * is delegated to [StylusChannelDispatcher] which uses two channels:
+ * [onMotion] is called on the Compose pointer-input thread at 100–240 Hz.
  *
- * - **sampleChannel** — capacity 512, DROP_OLDEST. For MOVE samples.
- * - **priorityChannel** — capacity 64, SUSPEND. For Button and Proximity actions
- *   (must not be dropped).
- *
- * [onMotion] itself is non-suspending and never blocks the pointer callback.
+ * All emit calls are dispatched through a [Channel] consumed by a **single-threaded**
+ * coroutine. This guarantees:
+ * - FIFO ordering across all actions from a single MotionEvent (Sample before Button).
+ * - One writer to the socket at a time — no concurrent send races (also fixes Bug 2).
+ * - Non-blocking caller: [Channel.trySend] never suspends the pointer callback.
  *
  * Exposes:
  * - [connectionState] — mirrors [ConnectionManager.state].
@@ -53,6 +55,7 @@ class ConnectionViewModel(
     application: Application,
     private val connectionManager: ConnectionManager,
     private val settings: SettingsRepository,
+    emitDispatcher: CoroutineContext? = null,
 ) : AndroidViewModel(application) {
 
     // Secondary constructor required by `AndroidViewModelFactory`, which uses
@@ -66,6 +69,37 @@ class ConnectionViewModel(
             application.getSharedPreferences("inkbridge_settings", Context.MODE_PRIVATE),
         ),
     )
+
+    // ── Single-threaded emit infrastructure (Bug 1 fix) ────────────────────────
+
+    /**
+     * Dedicated single-thread executor for all socket writes.
+     * A single thread guarantees FIFO ordering and eliminates concurrent-write races.
+     * Created here and closed in [onCleared] to avoid leaking the thread.
+     */
+    private val emitExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "inkbridge-emit").also { it.isDaemon = true }
+    }
+    private val resolvedEmitDispatcher: CoroutineContext =
+        emitDispatcher ?: emitExecutor.asCoroutineDispatcher()
+
+    /**
+     * Unbounded channel — producer (pointer callback) never blocks. The single
+     * consumer drains sequentially so order is always preserved.
+     */
+    @Suppress("MemberVisibilityCanBePrivate")  // testable
+    internal val emitChannel = Channel<suspend (StylusSink) -> Unit>(Channel.UNLIMITED)
+
+    // ── StreamStylus singleton (Bug 3/4 fix) ──────────────────────────────────
+
+    /**
+     * Single [StreamStylus] instance that lives for the ViewModel's lifetime.
+     * On connect/disconnect we call [StreamStylus.swapTransport] rather than
+     * replacing the whole object, so counters accumulate across reconnections and
+     * in-flight channel jobs always reach the correct transport.
+     */
+    @Suppress("MemberVisibilityCanBePrivate")
+    internal val streamStylus: StreamStylus = StreamStylus(transport = null)
 
     val connectionState: StateFlow<ConnectionState> = connectionManager.state
 
@@ -81,10 +115,6 @@ class ConnectionViewModel(
         settings.naturalScroll = enabled
         _naturalScroll.value = enabled
     }
-
-    // StreamStylus is recreated on each connect; initially null transport (no-op).
-    @Volatile
-    private var streamStylus: StreamStylus = StreamStylus(transport = null)
 
     // Two-finger gesture detector — shared across gesture events.
     private val gestureDetector = TwoFingerGestureDetector()
@@ -128,6 +158,14 @@ class ConnectionViewModel(
     @Volatile
     private var lastNormY: Float = 0.5f
 
+    /**
+     * Whether the immediately preceding stylus action was ACTION_DOWN.
+     * Used to preserve historical samples on the first ACTION_MOVE after a DOWN
+     * (Bug A-B6): those historical samples span the DOWN→MOVE gap and carry the
+     * initial pressure ramp data.
+     */
+    @Volatile private var lastActionWasDown: Boolean = false
+
     // ── Stats exposed to UI ────────────────────────────────────────────────────
 
     val stats: StateFlow<Stats> = connectionManager.state
@@ -147,24 +185,42 @@ class ConnectionViewModel(
             initialValue = Stats(),
         )
 
+    init {
+        // Single consumer: drains emitChannel on a dedicated single-thread dispatcher.
+        // FIFO is guaranteed because the channel is UNLIMITED (no reordering) and
+        // the consumer is sequential (one coroutine, single thread).
+        viewModelScope.launch(resolvedEmitDispatcher) {
+            for (job in emitChannel) {
+                job(streamStylus)
+            }
+        }
+    }
+
     // ── Actions ────────────────────────────────────────────────────────────────
 
     /**
      * Initiates a connection.
      *
      * [host] is ignored for USB_TCP (pinned to 127.0.0.1 in ConnectionManager).
+     *
+     * Bug 4 fix: transport is swapped BEFORE state transitions to Connected so that
+     * the very first frames emitted after the state change reach a live socket.
      */
     fun connect(host: String, port: Int, kind: TransportKind) {
         viewModelScope.launch {
             connectionManager.connect(host, port, kind)
-            streamStylus = StreamStylus(transport = connectionManager.currentTransport())
+            // swapTransport after connect() so the new transport is ready before
+            // any caller observing connectionState.Connected fires onMotion.
+            streamStylus.swapTransport(connectionManager.currentTransport())
         }
     }
 
     fun disconnect() {
         viewModelScope.launch {
+            // Null the transport first so in-flight channel jobs see no transport
+            // and drop gracefully, rather than writing to a closing socket.
+            streamStylus.swapTransport(null)
             connectionManager.disconnect()
-            streamStylus = StreamStylus(transport = null)
         }
     }
 
@@ -186,17 +242,24 @@ class ConnectionViewModel(
         val mapped = MotionEventMapper.map(
             AndroidMotionEvent(event, viewWidth, viewHeight),
         )
-        // Samsung S Pen at 240 Hz packs ~10-20 historical samples into each
-        // ACTION_MOVE / ACTION_HOVER_MOVE event. Forwarding all of them floods
-        // the socket under bursts (900+ sends/sec) and causes intermittent
-        // stalls. Drawing apps (Krita, Excalidraw) smooth strokes internally
-        // from 60 Hz input fine. Keep only the latest sample for MOVE events;
-        // always preserve every sample on transitions (DOWN/UP) where historical
-        // data conveys the exact initial/final pressure.
+        // Bug A-B6 fix: on the first MOVE after a DOWN, historical samples span the
+        // DOWN→MOVE gap and carry the initial pressure ramp. Preserve all of them so
+        // drawing apps receive the full ramp instead of starting at zero pressure.
+        // For all other MOVE events, keep only the latest sample to avoid flooding
+        // the socket at 900+ sends/sec (Samsung S Pen at 240 Hz with ~10-20 historicals).
+        val prevWasDown = lastActionWasDown
+        lastActionWasDown = (event.actionMasked == android.view.MotionEvent.ACTION_DOWN)
+
         val effectiveSamples = when (event.actionMasked) {
             android.view.MotionEvent.ACTION_MOVE,
             android.view.MotionEvent.ACTION_HOVER_MOVE,
-            -> mapped.lastOrNull()?.let(::listOf).orEmpty()
+            -> if (prevWasDown) {
+                // First MOVE after DOWN: preserve ALL historicals (Bug A-B6 fix).
+                mapped
+            } else {
+                // Subsequent MOVEs: latest sample only (avoids socket flooding).
+                mapped.lastOrNull()?.let(::listOf).orEmpty()
+            }
             else -> mapped
         }
         val actions = StylusRouter.route(
@@ -204,22 +267,21 @@ class ConnectionViewModel(
             samples = effectiveSamples,
             timestampNs = System.nanoTime(),
         )
-        // Per-action launch on IO. Prioritises subjective responsiveness — the
-        // newest MotionEvent's first sample reaches the transport without
-        // waiting for the previous MotionEvent's batch to drain. Samples may
-        // arrive out-of-order; the server's sequence-number check drops stale
-        // frames per wire-protocol.md R9, so correctness is preserved.
-        val sink = streamStylus
+        // Bug 1 fix: enqueue all actions atomically into the channel.
+        // The single-threaded consumer guarantees Sample is delivered before
+        // Button for ACTION_DOWN without any per-action launch overhead.
         for (action in actions) {
-            viewModelScope.launch(Dispatchers.IO) {
+            emitChannel.trySend(
                 when (action) {
-                    is StylusRouter.Action.Sample -> sink.emit(action.sample)
-                    is StylusRouter.Action.Button ->
+                    is StylusRouter.Action.Sample -> { sink -> sink.emit(action.sample) }
+                    is StylusRouter.Action.Button -> { sink ->
                         sink.emitButton(action.primaryPressed, action.secondaryPressed, action.timestampNs)
-                    is StylusRouter.Action.Proximity ->
+                    }
+                    is StylusRouter.Action.Proximity -> { sink ->
                         sink.emitProximity(action.entering, action.timestampNs)
-                }
-            }
+                    }
+                },
+            )
         }
     }
 
@@ -227,7 +289,7 @@ class ConnectionViewModel(
      * Called by [CaptureSurface] for every two-finger gesture MotionEvent. Non-blocking.
      *
      * Feeds [TwoFingerGestureDetector] and dispatches [GestureEvent]s through the
-     * same fire-and-forget IO coroutine pattern used by [onMotion].
+     * single-threaded channel used by [onMotion].
      *
      * Natural-scroll inversion is applied here before transmission so the wire
      * format carries the canonical direction and the macOS side need not know about
@@ -253,7 +315,6 @@ class ConnectionViewModel(
 
         val dx = event.getX(1) - event.getX(0)
         val dy = event.getY(1) - event.getY(0)
-        val spread = kotlin.math.sqrt(dx * dx + dy * dy)
 
         val eventTimeMs = event.eventTime
 
@@ -261,6 +322,7 @@ class ConnectionViewModel(
             android.view.MotionEvent.ACTION_POINTER_DOWN,
             android.view.MotionEvent.ACTION_DOWN,
             -> {
+                val spread = kotlin.math.sqrt(dx * dx + dy * dy)
                 gestureDetector.onTwoFingersDown(centroid, spread, eventTimeMs, viewWidth, viewHeight)
                 gestureFirstScroll = true
                 // Reset the lift-velocity seed so a touch-down → lift without any
@@ -271,16 +333,16 @@ class ConnectionViewModel(
                 // cancels any in-flight momentum from a previous gesture as soon
                 // as the user lays fingers back on the surface (Magic Trackpad
                 // behaviour) — without waiting for the first real scroll move.
-                val sinkSnap = streamStylus
                 val tsNow = System.nanoTime()
-                viewModelScope.launch(Dispatchers.IO) {
-                    sinkSnap.emitScroll(deltaX = 0, deltaY = 0, phaseFlags = 0x40u, timestampNs = tsNow)
+                emitChannel.trySend { sink ->
+                    sink.emitScroll(deltaX = 0, deltaY = 0, phaseFlags = 0x40u, timestampNs = tsNow)
                 }
                 gestureScrollOpen = true
                 gestureFirstScroll = false
                 emptyList()
             }
             android.view.MotionEvent.ACTION_MOVE -> {
+                val spread = kotlin.math.sqrt(dx * dx + dy * dy)
                 gestureDetector.onTwoFingersMove(centroid, spread, eventTimeMs)
             }
             android.view.MotionEvent.ACTION_POINTER_UP,
@@ -292,55 +354,49 @@ class ConnectionViewModel(
             else -> emptyList()
         }
 
-        val sink = streamStylus
         val naturalScroll = settings.naturalScroll
         val timestampNs = System.nanoTime()
 
         // If the gesture is ending and a scroll session is open, send a final
         // SCROLL_END frame so the macOS side can transition to momentum phase.
-        // lastScrollDelta* already holds the natural-scroll-corrected values
-        // emitted on the wire — re-inverting here would flip the momentum.
         val isLift = event.actionMasked == android.view.MotionEvent.ACTION_POINTER_UP ||
             event.actionMasked == android.view.MotionEvent.ACTION_UP ||
             event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
         if (isLift && gestureScrollOpen) {
             val finalDx = lastScrollDeltaX
             val finalDy = lastScrollDeltaY
-            viewModelScope.launch(Dispatchers.IO) {
+            emitChannel.trySend { sink ->
                 sink.emitScroll(deltaX = finalDx, deltaY = finalDy, phaseFlags = 0x80u, timestampNs = timestampNs)
             }
             gestureScrollOpen = false
         }
 
         for (ge in gestureEvents) {
-            viewModelScope.launch(Dispatchers.IO) {
-                when (ge) {
-                    is GestureEvent.Scroll -> {
-                        val effectiveDx = if (naturalScroll) ge.deltaX else (-ge.deltaX).toShort()
-                        val effectiveDy = if (naturalScroll) ge.deltaY else (-ge.deltaY).toShort()
-                        // Tag first scroll of a gesture with BEGIN so macOS
-                        // transitions kCGScrollPhase from null → began. Subsequent
-                        // events use 0 (changed). On lift the loop below sends END.
-                        val phase: UByte = if (gestureFirstScroll) {
-                            gestureFirstScroll = false
-                            gestureScrollOpen = true
-                            0x40u
-                        } else {
-                            0x00u
-                        }
-                        lastScrollDeltaX = effectiveDx
-                        lastScrollDeltaY = effectiveDy
+            when (ge) {
+                is GestureEvent.Scroll -> {
+                    val effectiveDx = if (naturalScroll) ge.deltaX else (-ge.deltaX).toShort()
+                    val effectiveDy = if (naturalScroll) ge.deltaY else (-ge.deltaY).toShort()
+                    val phase: UByte = if (gestureFirstScroll) {
+                        gestureFirstScroll = false
+                        gestureScrollOpen = true
+                        0x40u
+                    } else {
+                        0x00u
+                    }
+                    lastScrollDeltaX = effectiveDx
+                    lastScrollDeltaY = effectiveDy
+                    emitChannel.trySend { sink ->
                         sink.emitScroll(deltaX = effectiveDx, deltaY = effectiveDy, phaseFlags = phase, timestampNs = timestampNs)
                     }
-                    is GestureEvent.Zoom -> {
-                        sink.emitZoom(scaleDelta = ge.scaleDelta, timestampNs = timestampNs)
+                }
+                is GestureEvent.Zoom -> {
+                    val scaleDelta = ge.scaleDelta
+                    emitChannel.trySend { sink ->
+                        sink.emitZoom(scaleDelta = scaleDelta, timestampNs = timestampNs)
                     }
-                    is GestureEvent.RightClick -> {
-                        // Trackpad behaviour: right-click fires at the CURRENT cursor
-                        // position, not where the fingers tapped. The Mac server's
-                        // lastPoint is kept in sync by the cursorDelta path, so we
-                        // simply emit the secondary button down + up. Sending a MOVE
-                        // here would teleport the cursor to the tap centroid.
+                }
+                is GestureEvent.RightClick -> {
+                    emitChannel.trySend { sink ->
                         sink.emitButton(primaryPressed = false, secondaryPressed = true, timestampNs = timestampNs)
                         sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
                     }
@@ -364,7 +420,6 @@ class ConnectionViewModel(
         val x = event.getX(0)
         val y = event.getY(0)
         val now = event.eventTime
-        val sink = streamStylus
         val timestampNs = System.nanoTime()
 
         when (event.actionMasked) {
@@ -396,7 +451,7 @@ class ConnectionViewModel(
                 if (kotlin.math.abs(dx) >= 1f || kotlin.math.abs(dy) >= 1f) {
                     val clampedDx = dx.coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat()).toInt().toShort()
                     val clampedDy = dy.coerceIn(Short.MIN_VALUE.toFloat(), Short.MAX_VALUE.toFloat()).toInt().toShort()
-                    viewModelScope.launch(Dispatchers.IO) {
+                    emitChannel.trySend { sink ->
                         sink.emitCursorDelta(deltaX = clampedDx, deltaY = clampedDy, timestampNs = timestampNs)
                     }
                 }
@@ -407,7 +462,7 @@ class ConnectionViewModel(
                     elapsed < trackpadTapTimeoutMs &&
                     trackpadCumMovement < trackpadTapMovementThresholdPx
                 if (isTap) {
-                    viewModelScope.launch(Dispatchers.IO) {
+                    emitChannel.trySend { sink ->
                         sink.emitButton(primaryPressed = true, secondaryPressed = false, timestampNs = timestampNs)
                         sink.emitButton(primaryPressed = false, secondaryPressed = false, timestampNs = timestampNs)
                     }
@@ -420,6 +475,12 @@ class ConnectionViewModel(
                 trackpadActive = false
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        emitChannel.close()
+        emitExecutor.shutdown()
     }
 
     // ── Stats data class ───────────────────────────────────────────────────────

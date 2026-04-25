@@ -28,10 +28,17 @@ final class ServerViewModel: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private let port: UInt16 = 4545
 
+    /// Retained so that [refreshInjectorTrust] can call [Injector.refreshTrust].
+    /// Bug 7 fix: inject() no longer calls AXIsProcessTrustedWithOptions on every frame;
+    /// instead it reads the cached isTrusted field.  We must ensure
+    /// that field is kept current by calling [Injector.refreshTrust] here.
+    private let injector: any Injector
+
     // MARK: - Init
 
     init() {
         let injector = CGEventInjector()
+        self.injector = injector
         self.server = InkBridgeServer(injector: injector)
         self.isTrusted = injector.isTrusted
 
@@ -62,11 +69,25 @@ final class ServerViewModel: ObservableObject {
         }
 
         tunnelMaintainer.start()
+
+        // Bug 7 fix: refresh injector trust when the app returns to foreground.
+        // The user may have toggled Accessibility in System Settings while the app
+        // was backgrounded. NSApplication.willBecomeActiveNotification fires before
+        // the first event delivery after foreground return — ideal for a one-shot
+        // trust re-read without a syscall on every inject() call.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshInjectorTrust()
+        }
     }
 
     /// Preview / test initialiser — uses MockInjector, no-op listeners, no real ports.
     init(previewState: ServerState, isTrusted: Bool, tunnelState: UsbTunnelState = .idle) {
         let mock = MockInjector()
+        self.injector = mock
         self.server = InkBridgeServer(
             injector: mock,
             udpListener: NoOpListener(),
@@ -89,12 +110,22 @@ final class ServerViewModel: ObservableObject {
 
     /// Re-evaluate Accessibility trust immediately (bound to "I've enabled it — Recheck").
     func recheckPermission() {
-        let trusted = AXIsProcessTrusted()
-        isTrusted = trusted
-        if trusted {
+        refreshInjectorTrust()
+        if isTrusted {
             stopPermissionPolling()
             server.start(port: port)
         }
+    }
+
+    /// Calls [Injector.refreshTrust] and syncs the published [isTrusted] field.
+    ///
+    /// Bug 7 fix: [CGEventInjector.inject] no longer re-reads trust on every frame;
+    /// this method keeps the cached field up-to-date. [Injector.refreshTrust] updates
+    /// the injector's internal isTrusted cache; we read the system value separately to
+    /// update the ViewModel's own published [isTrusted] so the UI stays in sync.
+    private func refreshInjectorTrust() {
+        injector.refreshTrust()
+        isTrusted = AXIsProcessTrusted()
     }
 
     /// Stop the server manually.

@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -54,10 +56,17 @@ class UdpStylusClient(
 
     /**
      * Single reusable [DatagramPacket]. Initialized in [connect]; null before connect.
-     * Protected by the [Dispatchers.IO] context — only one coroutine calls [send] at a time.
+     *
+     * Bug 2 fix: access is serialised by [sendMutex] so that concurrent callers
+     * (regardless of dispatcher) cannot race on [reuseBuffer] + [DatagramPacket.setData].
+     * The single-threaded channel consumer in ConnectionViewModel provides the primary
+     * ordering guarantee; the Mutex is a belt-and-suspenders class-level invariant.
      */
     @Volatile
     private var reusePacket: DatagramPacket? = null
+
+    /** Serialises [send] calls so [reuseBuffer] is never accessed concurrently. */
+    private val sendMutex = Mutex()
 
     override suspend fun connect(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
@@ -73,18 +82,20 @@ class UdpStylusClient(
     }
 
     override suspend fun send(bytes: ByteArray): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val sock = socket ?: error("Not connected")
-            val packet = reusePacket
-            if (packet != null && bytes.size <= reuseBuffer.size) {
-                // Fast path: copy into the backing buffer and update length — no allocation.
-                bytes.copyInto(reuseBuffer)
-                packet.setData(reuseBuffer, 0, bytes.size)
-                sock.send(packet)
-            } else {
-                // Slow path: frame larger than the pre-allocated buffer (should not happen
-                // with the current protocol, but safe to handle).
-                sock.send(DatagramPacket(bytes, bytes.size))
+        sendMutex.withLock {
+            runCatching {
+                val sock = socket ?: error("Not connected")
+                val packet = reusePacket
+                if (packet != null && bytes.size <= reuseBuffer.size) {
+                    // Fast path: copy into the backing buffer and update length — no allocation.
+                    bytes.copyInto(reuseBuffer)
+                    packet.setData(reuseBuffer, 0, bytes.size)
+                    sock.send(packet)
+                } else {
+                    // Slow path: frame larger than the pre-allocated buffer (should not happen
+                    // with the current protocol, but safe to handle).
+                    sock.send(DatagramPacket(bytes, bytes.size))
+                }
             }
         }
     }
