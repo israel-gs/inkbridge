@@ -111,6 +111,9 @@ public final class InkBridgeServer: ObservableObject {
     // MARK: - Lifecycle
 
     /// Bind both listeners and start processing frames.
+    ///
+    /// Host discovery is handled separately by `BroadcastResponder` owned by
+    /// the SwiftUI ViewModel; the server itself only deals with the data path.
     public func start(port: UInt16 = 4545) {
         do {
             try udpListener.start()

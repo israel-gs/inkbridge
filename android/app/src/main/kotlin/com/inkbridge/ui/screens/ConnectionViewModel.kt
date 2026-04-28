@@ -16,6 +16,8 @@ import com.inkbridge.data.capture.StylusRouter
 import com.inkbridge.data.capture.TwoFingerGestureDetector
 import com.inkbridge.data.connection.ConnectionManager
 import com.inkbridge.data.settings.SettingsRepository
+import com.inkbridge.domain.discovery.DiscoveredHost
+import com.inkbridge.domain.discovery.HostDiscoverer
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.StylusSink
 import com.inkbridge.domain.model.TransportKind
@@ -25,11 +27,12 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -65,6 +68,7 @@ class ConnectionViewModel(
     private val settings: SettingsRepository,
     emitDispatcher: CoroutineContext? = null,
     initialHaptic: HapticFeedback = HapticFeedback { /* no-op default; replaced in UI via setHaptic */ },
+    private val hostDiscoverer: HostDiscoverer? = null,
 ) : AndroidViewModel(application) {
     // Secondary constructor required by `AndroidViewModelFactory`, which uses
     // reflection to find an `(Application)` ctor. Kotlin default values aren't
@@ -111,6 +115,61 @@ class ConnectionViewModel(
     internal val streamStylus: StreamStylus = StreamStylus(transport = null)
 
     val connectionState: StateFlow<ConnectionState> = connectionManager.state
+
+    // ── Wi-Fi host discovery ───────────────────────────────────────────────────
+
+    /**
+     * Current list of discovered InkBridge servers on the local network.
+     * Populated by [hostDiscoverer] when the Wi-Fi tab is focused.
+     * Always starts as an empty list (initial StateFlow value).
+     */
+    val discoveredHosts: StateFlow<List<DiscoveredHost>> =
+        (hostDiscoverer?.observe() ?: emptyFlow<List<DiscoveredHost>>()).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
+
+    /**
+     * Kept for API compatibility with existing tests; discovery is now driven
+     * from [init] and stopped in [onCleared] so that brief recompositions do
+     * not thrash NSD's resolveService callback.
+     */
+    fun onTabFocused() {
+        // Idempotent start in case the ViewModel was created before discoverer
+        // was injected via test path; harmless when already running.
+        hostDiscoverer ?: return
+        viewModelScope.launch { hostDiscoverer.start() }
+    }
+
+    fun onTabHidden() {
+        // Intentionally a no-op now. Stop is bound to ViewModel lifecycle.
+    }
+
+    /**
+     * Called when the user taps a discovered host row.
+     *
+     * Per spec: fills the host field with the resolved IPv4 and initiates the
+     * connect flow using the host's port. Manual IP entry still takes precedence
+     * if the user edits the field afterward.
+     *
+     * Exposes the selected IP as a one-shot event via [_tappedHostIp] so the
+     * ConnectionScreen composable can pre-fill its local `host` state.
+     */
+    private val _tappedHostIp = MutableStateFlow<String?>(null)
+
+    /** One-shot event: non-null when a discovered host was tapped. UI consumes and resets. */
+    val tappedHostIp: StateFlow<String?> = _tappedHostIp.asStateFlow()
+
+    fun onHostTapped(host: DiscoveredHost) {
+        _tappedHostIp.value = host.ipv4
+        connect(host = host.ipv4, port = host.port, kind = TransportKind.WIFI_UDP)
+    }
+
+    /** Called by the UI after consuming [tappedHostIp] to reset the event. */
+    fun consumeTappedHost() {
+        _tappedHostIp.value = null
+    }
 
     // ── Haptic feedback (Feature 3) ────────────────────────────────────────────
 
@@ -518,6 +577,14 @@ class ConnectionViewModel(
         // dynamically here is complementary and does not require extra permissions.
         val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         application.registerReceiver(usbReceiver, filter)
+
+        // Start NSD discovery for the lifetime of the ViewModel. Tying it to a
+        // composable lifecycle (DisposableEffect) caused thrashing on Samsung
+        // NSD where resolveService never completed before the next stop.
+        // onCleared() releases the lock and stops discovery.
+        hostDiscoverer?.let { discoverer ->
+            viewModelScope.launch { discoverer.start() }
+        }
     }
 
     // ── Actions ────────────────────────────────────────────────────────────────
@@ -986,6 +1053,10 @@ class ConnectionViewModel(
         // Shut down the single-thread executor so the dedicated thread exits.
         // This is best-effort: the executor will finish any already-running job first.
         emitExecutor.shutdown()
+        // Stop discovery and release MulticastLock if active.
+        hostDiscoverer?.let { discoverer ->
+            runBlocking { discoverer.stop() }
+        }
         // Disconnect the transport. viewModelScope is already cancelled here, so we
         // cannot use it — runBlocking is correct: we must not leave an open socket.
         runBlocking { connectionManager.disconnect() }

@@ -12,8 +12,9 @@ import com.inkbridge.ui.screens.InkBridgeApp
 /**
  * Single-Activity entry point.
  *
- * Manual DI: [ConnectionViewModel] is instantiated via AndroidViewModel factory
- * (no Hilt in this change — keeps dependencies minimal for the foundation spike).
+ * Manual DI: [ConnectionViewModel] is instantiated via [ConnectionViewModelFactory],
+ * which constructs the real broadcast-discovery chain so host discovery is
+ * live from first launch.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,7 +22,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             InkBridgeTheme {
-                val viewModel: ConnectionViewModel = viewModel()
+                val viewModel: ConnectionViewModel = viewModel(
+                    factory = ConnectionViewModelFactory(application),
+                )
                 InkBridgeApp(viewModel = viewModel)
             }
         }

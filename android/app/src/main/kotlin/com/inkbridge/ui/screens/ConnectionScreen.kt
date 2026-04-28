@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +55,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +76,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inkbridge.app.ui.theme.InkBridgeTheme
+import com.inkbridge.domain.discovery.DiscoveredHost
 import com.inkbridge.domain.model.ConnectionState
 import com.inkbridge.domain.model.TransportKind
 
@@ -98,11 +103,25 @@ fun ConnectionScreen(
     onConnect: (host: String, port: Int, kind: TransportKind) -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
+    discoveredHosts: List<DiscoveredHost> = emptyList(),
+    onHostTapped: (DiscoveredHost) -> Unit = {},
+    onTabFocused: () -> Unit = {},
+    onTabHidden: () -> Unit = {},
+    tappedHostIp: String? = null,
+    onConsumeTappedHost: () -> Unit = {},
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(TAB_WIFI) }
     var host by rememberSaveable { mutableStateOf("") }
     var portText by rememberSaveable { mutableStateOf(DEFAULT_PORT) }
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(tappedHostIp) {
+        val tapped = tappedHostIp
+        if (tapped != null) {
+            host = tapped
+            onConsumeTappedHost()
+        }
+    }
 
     val isConnecting = state is ConnectionState.Connecting
     val isConnected = state is ConnectionState.Connected
@@ -190,6 +209,10 @@ fun ConnectionScreen(
                     onHostChange = { host = it },
                     hostError = hostError,
                     enabled = controlsEnabled,
+                    discoveredHosts = discoveredHosts,
+                    onHostTapped = onHostTapped,
+                    onTabFocused = onTabFocused,
+                    onTabHidden = onTabHidden,
                 )
             TAB_USB -> UsbTabContent()
         }
@@ -275,28 +298,133 @@ private fun WifiTabContent(
     onHostChange: (String) -> Unit,
     hostError: String?,
     enabled: Boolean,
+    discoveredHosts: List<DiscoveredHost> = emptyList(),
+    onHostTapped: (DiscoveredHost) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onTabFocused: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onTabHidden: () -> Unit = {},
 ) {
-    OutlinedTextField(
-        value = host,
-        onValueChange = onHostChange,
-        label = { Text("Host IP") },
-        placeholder = { Text("192.168.1.100") },
-        isError = hostError != null,
-        supportingText = hostError?.let { { Text(it) } },
-        enabled = enabled,
-        singleLine = true,
-        keyboardOptions =
-            KeyboardOptions(
-                keyboardType = KeyboardType.Number,
-                imeAction = ImeAction.Done,
-            ),
-        colors =
-            OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.secondary,
-                cursorColor = MaterialTheme.colorScheme.secondary,
-            ),
-        modifier = Modifier.fillMaxWidth(),
-    )
+    // Discovery lifecycle is owned by the ViewModel — see ConnectionViewModel.init.
+    // Tying it to this composable caused dispose/recreate thrash that prevented
+    // NSD's resolveService callback from completing on Samsung devices.
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // ── Discovered hosts section (above manual field) ──────────────────────
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "Nearby servers",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (discoveredHosts.isEmpty()) {
+                // Empty state
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "No servers found — enter IP manually",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                    )
+                }
+            } else {
+                // Host list
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    discoveredHosts.forEach { discoveredHost ->
+                        DiscoveredHostRow(
+                            host = discoveredHost,
+                            onClick = { onHostTapped(discoveredHost) },
+                            enabled = enabled,
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Manual IP field (always visible, KEY_LAST_HOST semantics intact) ──
+        OutlinedTextField(
+            value = host,
+            onValueChange = onHostChange,
+            label = { Text("Host IP") },
+            placeholder = { Text("192.168.1.100") },
+            isError = hostError != null,
+            supportingText = hostError?.let { { Text(it) } },
+            enabled = enabled,
+            singleLine = true,
+            keyboardOptions =
+                KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done,
+                ),
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                    cursorColor = MaterialTheme.colorScheme.secondary,
+                ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * Single row representing one discovered [DiscoveredHost].
+ *
+ * Displays the server name and IPv4 address. Tapping the row fills the host field.
+ * Disabled when [enabled] is false (connecting / already connected).
+ */
+@Composable
+private fun DiscoveredHostRow(
+    host: DiscoveredHost,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .then(
+                    if (enabled) Modifier.clickable(onClick = onClick) else Modifier,
+                ),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = host.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = host.ipv4,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowForward,
+                contentDescription = "Connect to ${host.name}",
+                tint = if (enabled) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -594,6 +722,55 @@ private fun PreviewConnectionError() {
             state = ConnectionState.Error("Connection refused — run: adb reverse tcp:4545 tcp:4545"),
             onConnect = { _, _, _ -> },
             onDisconnect = {},
+        )
+    }
+}
+
+@Preview(
+    name = "Wi-Fi — discovered hosts",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 400,
+)
+@Composable
+private fun PreviewWifiDiscovery() {
+    InkBridgeTheme {
+        WifiTabContent(
+            host = "",
+            onHostChange = {},
+            hostError = null,
+            enabled = true,
+            discoveredHosts = listOf(
+                DiscoveredHost("InkBridge — Studio", "192.168.1.42", 4545, "1"),
+                DiscoveredHost("InkBridge — Laptop", "192.168.1.43", 4545, "1"),
+            ),
+            onHostTapped = {},
+            onTabFocused = {},
+            onTabHidden = {},
+        )
+    }
+}
+
+@Preview(
+    name = "Wi-Fi — empty state",
+    showBackground = true,
+    backgroundColor = 0xFF0A0A0A,
+    widthDp = 360,
+    heightDp = 300,
+)
+@Composable
+private fun PreviewWifiEmptyState() {
+    InkBridgeTheme {
+        WifiTabContent(
+            host = "",
+            onHostChange = {},
+            hostError = null,
+            enabled = true,
+            discoveredHosts = emptyList(),
+            onHostTapped = {},
+            onTabFocused = {},
+            onTabHidden = {},
         )
     }
 }

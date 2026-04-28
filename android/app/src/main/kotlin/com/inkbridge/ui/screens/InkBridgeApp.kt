@@ -36,6 +36,8 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
     val navController = rememberNavController()
     val state by viewModel.connectionState.collectAsState()
     val stats by viewModel.stats.collectAsState()
+    val discoveredHosts by viewModel.discoveredHosts.collectAsState()
+    val tappedHostIp by viewModel.tappedHostIp.collectAsState()
     val naturalScroll by viewModel.naturalScroll.collectAsState()
     val autoReconnect by viewModel.autoReconnect.collectAsState()
     val isAutoReconnecting by viewModel.isAutoReconnecting.collectAsState()
@@ -149,6 +151,17 @@ fun InkBridgeApp(viewModel: ConnectionViewModel) {
                 onDisconnect = {
                     viewModel.disconnect()
                 },
+                discoveredHosts = discoveredHosts,
+                onHostTapped = { host ->
+                    viewModel.onHostTapped(host)
+                    navController.navigate(ROUTE_STATUS) {
+                        launchSingleTop = true
+                    }
+                },
+                onTabFocused = { viewModel.onTabFocused() },
+                onTabHidden = { viewModel.onTabHidden() },
+                tappedHostIp = tappedHostIp,
+                onConsumeTappedHost = { viewModel.consumeTappedHost() },
             )
         }
         composable(ROUTE_STATUS) {

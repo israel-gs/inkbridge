@@ -436,4 +436,5 @@ final class InkBridgeServerTests: XCTestCase {
         XCTAssertEqual(s.packetsDropped, 2)
         XCTAssertEqual(s.injectionFailures, 3)
     }
+
 }

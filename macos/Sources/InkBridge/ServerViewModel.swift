@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import Foundation
 import InkBridgeCore
 import ApplicationServices
 import CoreGraphics
@@ -51,9 +52,11 @@ final class ServerViewModel: ObservableObject {
 
     private let server: InkBridgeServer
     private let tunnelMaintainer: UsbTunnelMaintainer
+    private let broadcastResponder: BroadcastResponder?
     private var cancellables = Set<AnyCancellable>()
     private var pollTask: Task<Void, Never>?
     private let port: UInt16 = 4545
+    private let probePort: UInt16 = 4546
 
     /// Retained so that [refreshInjectorTrust] can call [Injector.refreshTrust].
     /// Bug 7 fix: inject() no longer calls AXIsProcessTrustedWithOptions on every frame;
@@ -66,7 +69,21 @@ final class ServerViewModel: ObservableObject {
     init() {
         let injector = CGEventInjector()
         self.injector = injector
+
+        // Mac name shown to clients during discovery. Prefer the user-facing
+        // localized name (from System Settings → General → About), fall back
+        // to the POSIX hostname, and finally a literal "Mac".
+        let macName: String = {
+            let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+            return name.isEmpty ? "Mac" : name
+        }()
+
         self.server = InkBridgeServer(injector: injector)
+        self.broadcastResponder = BroadcastResponder(
+            probePort: probePort,
+            dataPort: port,
+            hostname: macName,
+        )
         self.isTrusted = injector.isTrusted
 
         // Build pressure-curve registry + frontmost-app detector and wire the
@@ -116,6 +133,7 @@ final class ServerViewModel: ObservableObject {
 
         if isTrusted {
             server.start(port: port)
+            startBroadcastResponder()
         } else {
             startPermissionPolling()
         }
@@ -146,6 +164,7 @@ final class ServerViewModel: ObservableObject {
             tcpListener: NoOpListener(),
             displayRect: DisplayRect(width: 1920, height: 1080)
         )
+        self.broadcastResponder = nil
         self.curveRegistry = CurveRegistry(store: UserDefaultsCurveStore())
         self.frontmostApp = FrontmostAppDetector(provider: { nil })
         self.isTrusted = isTrusted
@@ -168,6 +187,16 @@ final class ServerViewModel: ObservableObject {
         if isTrusted {
             stopPermissionPolling()
             server.start(port: port)
+            startBroadcastResponder()
+        }
+    }
+
+    private func startBroadcastResponder() {
+        guard let responder = broadcastResponder, !responder.isRunning else { return }
+        do {
+            try responder.start()
+        } catch {
+            NSLog("[ServerViewModel] BroadcastResponder failed to start: \(error)")
         }
     }
 
@@ -185,6 +214,7 @@ final class ServerViewModel: ObservableObject {
     /// Stop the server manually.
     func stopServer() {
         server.stop()
+        broadcastResponder?.stop()
     }
 
     // MARK: - Express-key remote capture
