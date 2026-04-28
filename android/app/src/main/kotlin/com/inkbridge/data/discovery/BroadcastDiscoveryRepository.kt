@@ -27,7 +27,7 @@ private const val TAG = "InkBridge.Discovery"
 private const val PROBE_PAYLOAD = "INKB?"
 private const val RESPONSE_PREFIX = "INKB!"
 private const val PROBE_INTERVAL_MS = 2_000L
-private const val STALE_THRESHOLD_MS = 6_000L
+private const val STALE_THRESHOLD_MS = 10_000L
 
 /**
  * Custom UDP-broadcast discovery — replacement for NSD/Bonjour.
@@ -159,7 +159,6 @@ class BroadcastDiscoveryRepository(
         val ipv4 = packet.address.hostAddress ?: return
         if (ipv4.contains(':')) return // skip IPv6 noise
 
-        val previousSeen = seenAt[ipv4]
         seenAt[ipv4] = now
 
         val current = _hosts.value
@@ -177,8 +176,6 @@ class BroadcastDiscoveryRepository(
                 if (it.ipv4 == ipv4) it.copy(name = rawName, port = dataPort, version = version) else it
             }
         }
-        // Quiet refresh path: previousSeen exists; nothing to log.
-        @Suppress("UNUSED_VARIABLE") val _quiet = previousSeen
     }
 
     private fun pruneStale(seenAt: HashMap<String, Long>, now: Long) {
