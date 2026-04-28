@@ -2,6 +2,16 @@
 
 > Phase: `sdd-spec` | Change: `wifi-discovery` | Date: 2026-04-27
 
+> **Note (2026-04-28)**: this spec captures the original mDNS/Bonjour design.
+> During implementation we discovered that Samsung NSD did not reliably receive
+> mDNS responses from `NWListener.service` or even `mDNSResponder` on a real
+> LAN — only the initial announcement burst was caught, with worst-case
+> discovery time approaching 45 s. The shipped implementation replaces mDNS
+> with a custom UDP broadcast probe on port `4546` (`INKB?` →
+> `INKB!<v>|<dataPort>|<hostname>`) which discovers the host in <60 ms
+> deterministically. See the README's "Discovery sub-protocol" section and
+> `BroadcastResponder.swift` / `BroadcastDiscoveryRepository.kt`.
+
 ## Purpose
 
 Defines behavior for automatic InkBridge server discovery over local Wi-Fi using

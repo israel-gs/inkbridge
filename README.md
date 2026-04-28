@@ -25,6 +25,7 @@ This is a personal spike, not a product. There is no notarized installer, no aut
 | **Express Keys** | Edge sidebar of 6 buttons | Per-key keyboard shortcut (`⌘ Z`, `[`, `]`...) or modifier-hold (`Ctrl`, `Cmd+Shift`...) |
 | **Profiles** | Settings → Profile picker | Switch the whole 6-key bar between named configurations (Default, Krita, Excalidraw...) |
 | **Capture from Mac** | Settings → Edit keys → Slot → "Capture from Mac" | Opens a modal on the Mac that captures the next physical keystroke and sends it back to the tablet |
+| **Wi-Fi auto-discovery** | UDP broadcast probe on `:4546` | Mac replies unicast within ~50 ms; the host appears in the Wi-Fi tab list. Manual IP entry stays as fallback |
 | One-Euro position smoothing | Server-side filter on stylus X/Y | Kills sensor jitter at hover without visible lag during fast strokes |
 | Latency histogram | Settings toggle in the Mac status window | Live arrival → inject percentile chart, throttled to 10 Hz |
 
@@ -36,7 +37,7 @@ The Mac side renders nothing visual on the canvas — it is a server: receive pa
 
 ### Android — connect (Wi-Fi)
 
-The first screen picks the transport. Wi-Fi mode asks for the Mac's LAN IP. Port defaults to `4545`. The screen is locked to landscape, scrollable when the soft keyboard is open.
+The first screen picks the transport. Wi-Fi mode auto-discovers the Mac on the LAN and shows it in a "Nearby servers" list — tap to connect. Manual IP entry remains as a fallback (Port defaults to `4545`). The screen is locked to landscape, scrollable when the soft keyboard is open.
 
 ![Android connection screen — Wi-Fi tab](docs/images/android-connect-wifi.png)
 
@@ -84,7 +85,7 @@ inkbridge/
 │   ├── Sources/InkBridge/        # SwiftUI app (ContentView, ServerViewModel, StatusView, CaptureKeyView)
 │   └── Sources/InkBridgeCore/    # Domain
 │       ├── Domain/               # OneEuroFilter, PressureCurve, LatencyHistogram, LatencyTracker
-│       ├── Transport/            # UDPListener, TCPListener (bidirectional, Network framework)
+│       ├── Transport/            # UDPListener, TCPListener, BroadcastResponder (discovery)
 │       ├── Injection/            # CGEventInjector — tablet, scroll, zoom, momentum, key, drag
 │       ├── Server/               # InkBridgeServer + CurveRegistry + FrontmostAppDetector
 │       └── Protocol/             # BinaryStylusCodec — wire format encode/decode
@@ -120,6 +121,17 @@ The protocol directory is the source of truth. Both client and server load the s
 | `CAPTURE_RESPONSE` | `0x09` | **Mac → tablet** | 20 B | Captured `(virtualKey, modifiers)` or cancelled flag |
 
 Full layout, flags byte, and payload offsets in [`protocol/README.md`](protocol/README.md).
+
+### Discovery sub-protocol (out-of-band, ASCII text)
+
+A separate UDP port `4546` carries the Wi-Fi auto-discovery handshake — tiny ASCII frames, no header, no dependency on the binary protocol above:
+
+| Direction | Payload | Sent to |
+|-----------|---------|---------|
+| Probe | `INKB?` (5 B) | `255.255.255.255:4546` and each interface's directed broadcast |
+| Response | `INKB!<version>\|<dataPort>\|<hostname>` | unicast to probe sender |
+
+The Android client polls every 2 s while the Wi-Fi tab is visible and prunes hosts not seen for 6 s. mDNS / Bonjour was tried first but Samsung NSD did not reliably catch responses on real LANs; the broadcast probe is deterministic in <60 ms.
 
 ---
 
@@ -237,7 +249,7 @@ Then on the Android side: pick **USB**, tap **Connect**.
 
 ### Wi-Fi connection
 
-Make sure the phone and Mac are on the same network. Find the Mac's LAN IP (`ifconfig | grep 'inet 192'`), enter it on the **Wi-Fi** tab, tap **Connect**. Note: capture-from-Mac requires TCP (USB), not UDP — the response cannot be addressed back over Wi-Fi UDP without a tracked remote.
+Make sure the phone and Mac are on the same network. Open the **Wi-Fi** tab — the Mac appears under "Nearby servers" within a second; tap to connect. If the network blocks broadcast (unusual on home routers, common on guest / corporate Wi-Fi), drop down to manual entry and type the Mac's LAN IP (`ifconfig | grep 'inet 192'`). Note: capture-from-Mac requires TCP (USB), not UDP — the response cannot be addressed back over Wi-Fi UDP without a tracked remote.
 
 ---
 
@@ -249,7 +261,7 @@ Both platforms run tests entirely in-process — no real sockets, no real ADB, n
 # macOS — 202 tests
 cd macos && swift test
 
-# Android — 215 tests
+# Android — 231 tests
 cd android && JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home \
   ./gradlew :app:testDebugUnitTest --no-daemon
 ```
@@ -293,6 +305,7 @@ Every change went through Spec-Driven Development. Proposals, specs, designs, an
 - `signal-quality` — One-Euro smoothing, per-app pressure curves, latency histogram
 - `express-keys` — KEY_EVENT 0x07 wire frame, Android sidebar UI, Mac keyboard injection
 - `mac-key-capture` — bidirectional wire (CAPTURE_REQUEST 0x08, CAPTURE_RESPONSE 0x09), Mac modal capture flow
+- `wifi-discovery` — UDP broadcast probe on `:4546` for instant LAN host discovery (replaces an mDNS attempt that was unreliable on Samsung NSD)
 
 Read the proposals first — they explain *why* before *how*.
 
