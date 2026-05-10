@@ -1,0 +1,2 @@
+# STYLUS_BUTTON primary pressed | version=1 event_type=0x03 flags=0x08(BUTTON_PRIMARY) _reserved=0x00 sequence=2 timestamp_ns=3000000000 | buttons=0x08(mirrors flags bits3-4) _pad=0x000000 | total=20 bytes
+01 03 08 00 02 00 00 00 00 5E D0 B2 00 00 00 00 08 00 00 00

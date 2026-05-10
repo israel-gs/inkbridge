@@ -1,0 +1,2 @@
+# STYLUS_PROXIMITY leaving | version=1 event_type=0x02 flags=0x00(HOVER clear) _reserved=0x00 sequence=1 timestamp_ns=2000000000 | entering=0x00 _pad=0x000000 | total=20 bytes
+01 02 00 00 01 00 00 00 00 94 35 77 00 00 00 00 00 00 00 00

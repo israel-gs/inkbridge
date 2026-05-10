@@ -1,0 +1,2 @@
+# STYLUS_PROXIMITY entering | version=1 event_type=0x02 flags=0x04(HOVER) _reserved=0x00 sequence=0 timestamp_ns=1000000000 | entering=0x01 _pad=0x000000 | total=20 bytes
+01 02 04 00 00 00 00 00 00 CA 9A 3B 00 00 00 00 01 00 00 00

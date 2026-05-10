@@ -1,0 +1,3 @@
+# STYLUS_ZOOM | version=1 event_type=0x05 flags=0x00 _reserved=0x00 sequence=0 timestamp_ns=0
+# payload: scale_delta=1.10 (f32 LE ~= 0x3F8CCCCD) | total=20 bytes
+01 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 CD CC 8C 3F

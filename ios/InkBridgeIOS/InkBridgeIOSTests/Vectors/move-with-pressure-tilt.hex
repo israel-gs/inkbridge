@@ -1,0 +1,2 @@
+# STYLUS_MOVE | version=1 event_type=0x01 flags=0x03(PRESSURE_PRESENT|TILT_PRESENT) _reserved=0x00 sequence=42 timestamp_ns=8000000000 | x=0.5 y=0.25 pressure=49151 tilt_x=4500(45.00deg) tilt_y=-1800(-18.00deg) _pad=0x0000 _reserved=0x00000000 | total=36 bytes
+01 01 03 00 2A 00 00 00 00 50 D6 DC 01 00 00 00 00 00 00 3F 00 00 80 3E FF BF 94 11 F8 F8 00 00 00 00 00 00

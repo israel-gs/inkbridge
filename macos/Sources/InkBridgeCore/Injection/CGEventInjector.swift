@@ -74,15 +74,24 @@ public final class CGEventInjector: Injector {
     // MARK: - Gesture injection (scroll + zoom)
 
     /// Controls whether `injectZoom` attempts kCGEventTypeGesture (raw value 29)
-    /// before falling back to Cmd+scroll. Empirically the gesture-event path is
-    /// silently dropped on macOS 14+ for unentitled apps even with Hardened
-    /// Runtime + Apple Development cert, so the default is `false` (use the
-    /// Cmd+scroll fallback which works universally).
+    /// before falling back to the Cmd+= / Cmd+- keystroke path. Empirically the
+    /// gesture-event path is silently dropped on macOS 14+ for unentitled apps
+    /// even with Hardened Runtime + Apple Development cert, so the default is
+    /// `false` (use the keystroke fallback which works universally).
     ///
     /// TODO: Remove this flag and the associated branch once the kCGEventTypeGesture
     /// path is confirmed permanently broken on all supported macOS versions (14+).
-    /// The Cmd+scroll fallback is the correct production path.
+    /// The Cmd+= / Cmd+- keystroke fallback is the correct production path.
     public var preferGestureEvent: Bool = false
+
+    /// Cumulative zoom accumulator for the Cmd+= / Cmd+- keystroke fallback.
+    ///
+    /// Per-frame scaleDelta values are small (~1.003–1.02). We multiply them
+    /// together until the product crosses ±10% from 1.0, then fire a single
+    /// keystroke and reset. This makes zoom discrete (each keystroke ≈ 10% step
+    /// in browsers) rather than continuous — an intentional trade-off: Cmd+scroll
+    /// and kCGEventTypeGesture both fail in Safari/Arc/Firefox without a private
+    /// entitlement, but Cmd+= / Cmd+- are universally handled by every app.
 
     /// Tracks the in-flight momentum simulation task so a fresh gesture can cancel it.
     private var momentumTask: Task<Void, Never>?
@@ -393,35 +402,36 @@ public final class CGEventInjector: Injector {
             }
         }
 
-        // Fallback: synthesise Cmd+scroll which apps interpret as zoom.
-        // Post flagsChanged (cmd down), a vertical scroll proportional to scaleDelta,
-        // then flagsChanged (cmd up) to release the modifier.
-        guard let flagsDown = CGEvent(source: eventSource) else {
-            throw InjectorError.eventCreationFailed
-        }
-        flagsDown.type = .flagsChanged
-        flagsDown.flags = .maskCommand
-        flagsDown.post(tap: .cgSessionEventTap)
-
-        // Per-frame scaleDelta is small (~1.005..1.05). Multiply generously so
-        // the resulting Cmd+scroll has perceptible zoom magnitude in apps that
-        // use scroll ticks for zoom (Krita, Preview, Affinity, browsers).
-        let zoomAmount = Int32((scaleDelta - 1.0) * 80)
-        if let scrollEvent = CGEvent(
+        // Fallback: post a plain vertical scroll event proportional to the magnification
+        // ratio, with NO modifier added by this method. Modifier handling is delegated to
+        // `heldModifiers` (asserted by the express-key bar). The user activates zoom by
+        // holding e.g. `Ctrl (hold)` on the express bar and pinching: heldModifiers will
+        // contain .maskControl, the scroll event below picks it up, and the system reads
+        // it as Ctrl+scroll = accessibility zoom (or app-specific zoom).
+        //
+        // Rationale: Cmd+scroll and Cmd+= keystrokes both fail in some browsers due to
+        // synthetic-modifier gotchas (engram #110). The Android client handles zoom via
+        // express-key Ctrl + scroll exclusively — this matches that behavior on macOS
+        // and removes the synthetic-modifier surface area entirely.
+        let scrollAmount = Int32((scaleDelta - 1.0) * 80)
+        guard scrollAmount != 0 else { return }
+        guard let scrollEvent = CGEvent(
             scrollWheelEvent2Source: eventSource,
             units: .pixel,
             wheelCount: 1,
-            wheel1: zoomAmount,
+            wheel1: scrollAmount,
             wheel2: 0,
             wheel3: 0
-        ) {
-            scrollEvent.post(tap: .cgSessionEventTap)
+        ) else {
+            throw InjectorError.eventCreationFailed
         }
-
-        guard let flagsUp = CGEvent(source: eventSource) else { return }
-        flagsUp.type = .flagsChanged
-        flagsUp.flags = []
-        flagsUp.post(tap: .cgSessionEventTap)
+        // Mark as a touch-device scroll for momentum/phase consistency.
+        if let contField = CGEventField(rawValue: 88) {
+            scrollEvent.setIntegerValueField(contField, value: 1)
+        }
+        // Pick up any modifier currently asserted by the express-key bar.
+        scrollEvent.flags = heldModifiers
+        scrollEvent.post(tap: .cgSessionEventTap)
     }
 
     // MARK: - Stylus injection

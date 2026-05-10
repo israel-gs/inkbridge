@@ -1,0 +1,5 @@
+# CAPTURE_REQUEST | version=1 event_type=0x08 flags=0x00 _reserved=0x00 sequence=100 timestamp_ns=2000000000
+# payload: slot_id=3 _pad=0x000000 | total=20 bytes
+# Header: 01 08 00 00 | seq=100(0x64 LE): 64 00 00 00 | ts=2000000000(0x77359400 LE): 00 94 35 77 00 00 00 00
+# Payload: slot=03 pad=00 00 00
+01 08 00 00 64 00 00 00 00 94 35 77 00 00 00 00 03 00 00 00

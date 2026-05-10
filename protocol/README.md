@@ -35,6 +35,7 @@ This directory documents the binary frame format exchanged between the Android c
 | `0x05` | `STYLUS_ZOOM` | 4 bytes | **20 bytes** |
 | `0x06` | `CURSOR_DELTA` | 4 bytes | **20 bytes** |
 | `0x07` | `KEY_EVENT` | 4 bytes | **20 bytes** |
+| `0x08` | `CAPTURE_REQUEST` | 4 bytes | **20 bytes** |
 
 All other `event_type` values are reserved. Decoders MUST discard unknown types without crashing.
 
@@ -103,6 +104,19 @@ When `key_code == 0x00`, the receiver MUST treat the event as modifier-only and 
 
 ---
 
+## CAPTURE_REQUEST payload (4 bytes, offset 16–19)
+
+| Offset from payload start | Size | Type | Field | Description |
+|---------------------------|------|------|-------|-------------|
+| 0 | 1 | u8 | `slot_id` | Express Key slot index (0-based). |
+| 1 | 3 | — | `_pad` | MUST be `0x000000`; receiver MUST ignore. |
+
+The server responds with a 4-byte inline CAPTURE_RESPONSE packet on the same UDP port:
+`[slot_id, key_code, modifiers, cancelled]`. The iOS client reads this response via
+`CaptureResponseParser` (not via this codec).
+
+---
+
 ## Test vectors
 
 Test vectors are in `test-vectors/`. Each `.hex` file is a single line of uppercase hex pairs separated by spaces, preceded by a `#` comment line describing the frame.
@@ -115,14 +129,22 @@ Implementations MUST encode each scenario to the exact byte sequence shown. Deco
 | `proximity-enter.hex` | `STYLUS_PROXIMITY` | entering=1, HOVER flag set, seq=0 |
 | `proximity-exit.hex` | `STYLUS_PROXIMITY` | entering=0, HOVER flag clear, seq=1 |
 | `button-press.hex` | `STYLUS_BUTTON` | BUTTON_PRIMARY flag set, buttons=0x08, seq=2 |
+| `cursor-delta.hex` | `CURSOR_DELTA` | dx=10, dy=-5, seq=0, ts=0 |
+| `scroll-down.hex` | `STYLUS_SCROLL` | deltaX=0, deltaY=30, seq=0, ts=0 |
+| `zoom-in.hex` | `STYLUS_ZOOM` | scale_delta=1.10, seq=0, ts=0 |
+| `key-event.hex` | `KEY_EVENT` | Cmd+Z tap, key_code=0x06, mods=0x01, action=0x03, seq=42, ts=12345 |
+| `capture-request.hex` | `CAPTURE_REQUEST` | slot_id=3, seq=100, ts=2_000_000_000 |
 
 See `test-vectors/` for the byte sequences.
 
 ### Vector mirrors
 
-`macos/Tests/InkBridgeCoreTests/Vectors/` is a copy of the four `.hex` files above, embedded in
+`macos/Tests/InkBridgeCoreTests/Vectors/` is a copy of the `.hex` files above, embedded in
 the Swift test bundle (SPM `.copy("Vectors")` resource rule). If you edit the canonical vectors
 here, re-copy them there manually — Swift Package Manager embeds resources at build time.
+
+`ios/InkBridgeIOS/InkBridgeIOSTests/Vectors/` is a second manual mirror for the iPhone Xcode
+test target. Copy canonical vectors here when adding new test vector files.
 
 The Android Gradle `copyProtocolVectors` task in `android/app/build.gradle.kts` copies the
 canonical vectors automatically before `./gradlew test` runs — no manual step needed there.
