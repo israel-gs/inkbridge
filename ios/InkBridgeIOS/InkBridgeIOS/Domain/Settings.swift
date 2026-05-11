@@ -15,28 +15,33 @@ public struct Settings: Equatable {
     public var hostOverride: String
     /// Last-used port.
     public var port: UInt16
-    /// Whether haptic feedback fires on Express Key taps.
-    public var haptics: Bool
+    /// Haptic feedback intensity: 0 = off, 1–100 = scaled intensity.
+    /// Migrated from legacy Bool field on first load (true → 100, false → 0).
+    public var hapticIntensity: Int
     /// Reverses scroll direction to match macOS Natural Scroll setting.
     public var naturalScroll: Bool
     /// Which edge of the screen the Express Keys sidebar occupies.
     public var sidebarEdge: SidebarEdge
     /// The UUID string of the active Express Key profile.
     public var activeProfileId: String
+    /// Whether the app auto-reconnects to the last host when foregrounded.
+    public var autoReconnect: Bool
 
     public init(
         hostOverride: String = "",
         port: UInt16 = 4545,
-        haptics: Bool = true,
+        hapticIntensity: Int = 50,
         naturalScroll: Bool = true,
         sidebarEdge: SidebarEdge = .trailing,
-        activeProfileId: String = ""
+        activeProfileId: String = "",
+        autoReconnect: Bool = true
     ) {
         self.hostOverride = hostOverride
         self.port = port
-        self.haptics = haptics
+        self.hapticIntensity = hapticIntensity
         self.naturalScroll = naturalScroll
         self.sidebarEdge = sidebarEdge
         self.activeProfileId = activeProfileId
+        self.autoReconnect = autoReconnect
     }
 }

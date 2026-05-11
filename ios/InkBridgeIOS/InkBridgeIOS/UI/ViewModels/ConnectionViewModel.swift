@@ -40,6 +40,8 @@ public final class ConnectionViewModel {
 
     private let udpClient: any UDPClient
     private let discovery: any BroadcastDiscovery
+    /// Optional settings repo — when provided, `autoReconnect` gates foreground reconnect.
+    private let settingsRepo: (any SettingsRepository)?
 
     // MARK: - Internal state
 
@@ -49,9 +51,14 @@ public final class ConnectionViewModel {
 
     // MARK: - Init
 
-    public init(udpClient: any UDPClient, discovery: any BroadcastDiscovery) {
+    public init(
+        udpClient: any UDPClient,
+        discovery: any BroadcastDiscovery,
+        settingsRepo: (any SettingsRepository)? = nil
+    ) {
         self.udpClient = udpClient
         self.discovery = discovery
+        self.settingsRepo = settingsRepo
     }
 
     // MARK: - Lifecycle
@@ -170,8 +177,10 @@ public final class ConnectionViewModel {
             Task { await udpClient.disconnect() }
         case .active:
             startDiscovery()
-            // If the app was previously connected, attempt to reconnect.
-            if let host = lastConnectedHost {
+            // Auto-reconnect when a prior host exists and the setting is enabled.
+            // When settingsRepo is nil (legacy / test path) we default to allowing reconnect.
+            let shouldReconnect = settingsRepo?.autoReconnect ?? true
+            if shouldReconnect, let host = lastConnectedHost {
                 connect(to: host)
             }
         default:

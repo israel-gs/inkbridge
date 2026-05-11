@@ -57,6 +57,43 @@ public struct ExpressKeysSettingsScreen: View {
                         get: { settingsRepo.naturalScroll },
                         set: { settingsRepo.naturalScroll = $0 }
                     ))
+
+                    Toggle("Auto-reconnect when app reopens", isOn: Binding(
+                        get: { settingsRepo.autoReconnect },
+                        set: { settingsRepo.autoReconnect = $0 }
+                    ))
+                }
+
+                // Appearance section — sidebar position + haptics
+                Section("Appearance") {
+                    // Sidebar edge toggle (segmented picker)
+                    Picker("Sidebar position", selection: Binding(
+                        get: { settingsRepo.sidebarEdge },
+                        set: { settingsRepo.sidebarEdge = $0 }
+                    )) {
+                        Text("Left").tag(SidebarEdge.leading)
+                        Text("Right").tag(SidebarEdge.trailing)
+                    }
+                    .pickerStyle(.segmented)
+
+                    // Haptic intensity slider (0–100)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Haptic intensity")
+                            Spacer()
+                            Text("\(settingsRepo.hapticIntensity)%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { Double(settingsRepo.hapticIntensity) },
+                                set: { settingsRepo.hapticIntensity = Int($0.rounded()) }
+                            ),
+                            in: 0...100,
+                            step: 1
+                        )
+                    }
                 }
 
                 // Profile picker section

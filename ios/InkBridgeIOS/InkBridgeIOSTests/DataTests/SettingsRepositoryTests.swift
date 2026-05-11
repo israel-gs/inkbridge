@@ -35,9 +35,14 @@ final class SettingsRepositoryTests: XCTestCase {
         XCTAssertEqual(repo.port, 4545)
     }
 
-    func test_defaults_haptics_isTrue() {
+    func test_defaults_hapticIntensity_is50() {
         let repo = makeRepo()
-        XCTAssertTrue(repo.haptics)
+        XCTAssertEqual(repo.hapticIntensity, 50)
+    }
+
+    func test_defaults_autoReconnect_isTrue() {
+        let repo = makeRepo()
+        XCTAssertTrue(repo.autoReconnect)
     }
 
     func test_defaults_naturalScroll_isTrue() {
@@ -71,11 +76,42 @@ final class SettingsRepositoryTests: XCTestCase {
         XCTAssertEqual(repo2.port, 9999)
     }
 
-    func test_roundTrip_haptics_false() {
+    func test_roundTrip_hapticIntensity() {
         let repo = makeRepo()
-        repo.haptics = false
+        repo.hapticIntensity = 75
         let repo2 = makeRepo()
-        XCTAssertFalse(repo2.haptics)
+        XCTAssertEqual(repo2.hapticIntensity, 75)
+    }
+
+    func test_roundTrip_hapticIntensity_zero() {
+        let repo = makeRepo()
+        repo.hapticIntensity = 0
+        let repo2 = makeRepo()
+        XCTAssertEqual(repo2.hapticIntensity, 0)
+    }
+
+    func test_roundTrip_autoReconnect_false() {
+        let repo = makeRepo()
+        repo.autoReconnect = false
+        let repo2 = makeRepo()
+        XCTAssertFalse(repo2.autoReconnect)
+    }
+
+    /// Migration: legacy Bool `true` (haptics on) → hapticIntensity == 100.
+    func test_migration_legacyHapticsTrue_mapsTo100() {
+        defaults.set(true, forKey: "inkbridge.settings.haptics")
+        let repo = makeRepo()
+        XCTAssertEqual(repo.hapticIntensity, 100)
+        // Legacy key must be removed after migration.
+        XCTAssertNil(defaults.object(forKey: "inkbridge.settings.haptics"))
+    }
+
+    /// Migration: legacy Bool `false` (haptics off) → hapticIntensity == 0.
+    func test_migration_legacyHapticsFalse_mapsTo0() {
+        defaults.set(false, forKey: "inkbridge.settings.haptics")
+        let repo = makeRepo()
+        XCTAssertEqual(repo.hapticIntensity, 0)
+        XCTAssertNil(defaults.object(forKey: "inkbridge.settings.haptics"))
     }
 
     func test_roundTrip_naturalScroll_false() {

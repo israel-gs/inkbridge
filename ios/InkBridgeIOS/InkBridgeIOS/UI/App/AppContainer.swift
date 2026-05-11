@@ -37,7 +37,8 @@ final class AppContainer: ObservableObject {
 
         self.connectionViewModel = ConnectionViewModel(
             udpClient: udpClient,
-            discovery: discovery
+            discovery: discovery,
+            settingsRepo: settingsRepo
         )
 
         // Load the persisted profile list and pick the first profile (the active one).

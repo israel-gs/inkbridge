@@ -1,6 +1,6 @@
-# Apply Progress: ios-client — Batches 1 + 2 + 3 + scroll-fix + 4 + 5 + 6 + 7 + Block-M-R10
+# Apply Progress: ios-client — Batches 1 + 2 + 3 + scroll-fix + 4 + 5 + 6 + 7 + Block-M-R10 + Polish-Parity
 
-> Mode: Strict TDD (Batches 1–3) → Test-parity (Batch 4 onwards) | Date: 2026-05-09/10 | Batches so far: 7 + bugfix + Block-M-R10
+> Mode: Strict TDD (Batches 1–3) → Test-parity (Batch 4 onwards) | Date: 2026-05-09/10 | Batches so far: 7 + bugfix + Block-M-R10 + Polish-Parity
 
 ---
 
@@ -947,3 +947,43 @@ Zoom is now discrete: each keystroke steps ~10% (browser behavior for Cmd+=). Pe
 
 - `macos/Sources/InkBridgeCore/Injection/CGEventInjector.swift` — `cumZoom` state, new accumulator logic in `injectZoom`, new `postZoomKeystroke` helper, updated doc comments on `preferGestureEvent`
 - `ios/InkBridgeIOS/InkBridgeIOSTests/InputTests/TouchRouterScrollZoomTests.swift` — updated phase progression test + 5 new grace-period tests
+
+---
+
+## Polish pass — iOS↔Android parity
+
+> Mode: Test-parity | Date: 2026-05-10 | Build: GREEN
+
+### Changes applied
+
+1. **Sidebar edge toggle (LEFT/RIGHT)** — Added `Picker("Sidebar position", ...)` with segmented style in a new "Appearance" section of `ExpressKeysSettingsScreen`. Reads/writes `settingsRepo.sidebarEdge`.
+
+2. **Haptic intensity slider (Bool → Int 0–100)** — `Settings.haptics: Bool` replaced with `hapticIntensity: Int` (default 50). `SettingsRepository` protocol and `UserDefaultsSettingsRepository` updated with migration logic (legacy `true` → 100, `false` → 0). `ExpressKeysSidebar` / `ExpressKeyButton` now accept `hapticIntensity` and map to UIImpactFeedbackGenerator styles (0=off, 1-40=.soft, 41-70=.light, 71-90=.medium, 91-100=.rigid). Slider added to Appearance section.
+
+3. **Auto-reconnect toggle** — `autoReconnect: Bool` (default `true`) added to `Settings`, `SettingsRepository` protocol, and `UserDefaultsSettingsRepository`. `ConnectionViewModel` now accepts optional `settingsRepo` and gates `handleScenePhase(.active)` reconnect on `settingsRepo.autoReconnect`. `AppContainer` passes `settingsRepo` to `ConnectionViewModel`. Toggle added in General section.
+
+4. **Dot grid brightens when connected** — `dotGridCanvas` in `CaptureScreen` now derives `dotColor` from `viewModel.connectionState`: `Color.inkDotBright` (#3F3F3F) when connected, `Color.inkDotDim` (#262626) when not. Animated with `.easeInOut(duration: 0.4)`.
+
+5. **Connection state pill pulse animation** — `ConnectionStatePill` restructured with `@State` `pulseScale` / `pulseOpacity`. A `Circle` halo with `.scaleEffect(pulseScale).opacity(pulseOpacity)` pulses at 1.2s loop when connected. `.onAppear` and `.onChange(of: isConnected)` start/stop the animation.
+
+6. **Accent color — cyan #22D3EE** — New `UI/Theme/Colors.swift` defines `Color.inkAccent`, `Color.inkBlack`, `Color.inkDotBright`, `Color.inkDotDim` matching Android values exactly. `ConnectionStatePill` dot uses `.inkAccent` when connected. Right-click flash changed from `.blue` to `.inkAccent`. Base background changed from `Color.black` to `Color.inkBlack` (#0A0A0A).
+
+7. **Fullscreen toggle button in HUD** — `@State var isFullscreen: Bool` in `CaptureScreen`. Fullscreen button added to top-right HUD (SF Symbol: `arrow.up.left.and.arrow.down.right` / exit). When `isFullscreen == true`: pill + settings + disconnect fade to opacity 0, sidebar hidden via `if !isFullscreen`. Toggle button stays visible (semi-transparent at 0.45 opacity).
+
+### Tests updated
+
+- `SettingsRepositoryTests.swift` — replaced `haptics` Bool tests with `hapticIntensity` Int tests; added migration tests (legacyBool true→100, false→0); added `autoReconnect` round-trip test.
+- `CaptureViewModelTests.swift` (`FakeSettingsRepository`) — `haptics: Bool` → `hapticIntensity: Int`, added `autoReconnect: Bool`.
+
+### Files modified/created
+
+- `ios/InkBridgeIOS/InkBridgeIOS/Domain/Settings.swift` — `hapticIntensity: Int`, `autoReconnect: Bool`, removed `haptics: Bool`
+- `ios/InkBridgeIOS/InkBridgeIOS/Data/SettingsRepository.swift` — protocol + implementation updated; migration logic for legacy Bool key
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/Theme/Colors.swift` — **NEW** — design-system color constants
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/Screens/CaptureScreen.swift` — dot grid reactive, pulse pill, fullscreen toggle, inkAccent colors
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/Canvas/ExpressKeysSidebar.swift` — hapticIntensity wiring, feedbackStyle computed property
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/Screens/ExpressKeysSettingsScreen.swift` — Appearance section with sidebar picker, haptic slider, auto-reconnect toggle
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/ViewModels/ConnectionViewModel.swift` — optional settingsRepo, gated autoReconnect
+- `ios/InkBridgeIOS/InkBridgeIOS/UI/App/AppContainer.swift` — passes settingsRepo to ConnectionViewModel
+- `ios/InkBridgeIOS/InkBridgeIOSTests/DataTests/SettingsRepositoryTests.swift` — updated tests
+- `ios/InkBridgeIOS/InkBridgeIOSTests/TransportTests/CaptureViewModelTests.swift` — FakeSettingsRepository updated

@@ -22,6 +22,8 @@ public struct CaptureScreen: View {
     @State private var viewModel: CaptureViewModel
     let onDisconnect: () -> Void
     @State private var showSettings: Bool = false
+    /// When true, all HUD chrome fades out; only the fullscreen-toggle stays visible.
+    @State private var isFullscreen: Bool = false
 
     /// Rects accumulated from sidebar and HUD backgrounds, forwarded to the canvas as deadzones.
     @State private var deadzones: [CGRect] = []
@@ -46,8 +48,8 @@ public struct CaptureScreen: View {
     public var body: some View {
         GeometryReader { fullGeo in
             ZStack(alignment: .topLeading) {
-                // LAYER 0 — Pure black base (extends under safe-area).
-                Color.black.ignoresSafeArea()
+                // LAYER 0 — OLED-friendly near-black base (extends under safe-area).
+                Color.inkBlack.ignoresSafeArea()
 
                 // LAYER 0.5 — Dot grid (visual parity with Android). Drawn in SwiftUI
                 // so it sits behind the transparent UIView canvas surface.
@@ -60,8 +62,10 @@ public struct CaptureScreen: View {
                 CanvasRepresentable(sink: viewModel, deadzones: deadzones)
                     .ignoresSafeArea()
 
-                // LAYER 2 — Express Keys sidebar (left or right edge).
-                sidebarOverlay(fullGeo: fullGeo)
+                // LAYER 2 — Express Keys sidebar (left or right edge). Hidden in fullscreen.
+                if !isFullscreen {
+                    sidebarOverlay(fullGeo: fullGeo)
+                }
 
                 // LAYER 3 — HUD controls (top corners).
                 hudOverlay(fullGeo: fullGeo)
@@ -82,13 +86,22 @@ public struct CaptureScreen: View {
         }
     }
 
-    // MARK: - Dot grid (Bug D fix — visual parity with Android CaptureSurface)
+    // MARK: - Dot grid (visual parity with Android CaptureSurface)
 
-    /// Subtle dot grid at 24 pt pitch on a black background, matching Android's
+    /// Subtle dot grid at 24 pt pitch on a near-black background, matching Android's
     /// `drawDotGrid` (32 dp pitch adapted to iOS point units).
+    ///
+    /// Dot color brightens when connected, matching Android:
+    ///   • Connected:    #3F3F3F (`Color.inkDotBright`)
+    ///   • Disconnected: #262626 (`Color.inkDotDim`)
     private var dotGridCanvas: some View {
-        Canvas { context, size in
-            let dotColor = Color(white: 0.14)
+        let isConnected: Bool = {
+            if case .connected = viewModel.connectionState { return true }
+            return false
+        }()
+        let dotColor = isConnected ? Color.inkDotBright : Color.inkDotDim
+
+        return Canvas { context, size in
             let spacing: CGFloat = 24
             let radius: CGFloat = 1
             var x: CGFloat = spacing / 2
@@ -107,7 +120,8 @@ public struct CaptureScreen: View {
                 x += spacing
             }
         }
-        .background(Color.black)
+        .background(Color.inkBlack)
+        .animation(.easeInOut(duration: 0.4), value: isConnected)
     }
 
     // MARK: - Click Flash Overlay (K.2)
@@ -122,7 +136,8 @@ public struct CaptureScreen: View {
             case .left(let pt):
                 clickCircle(at: pt, color: .white)
             case .right(let pt):
-                clickCircle(at: pt, color: .blue)
+                // Right-click uses the InkBridge accent cyan (matches Android).
+                clickCircle(at: pt, color: .inkAccent)
             }
         }
         .ignoresSafeArea()
@@ -146,11 +161,14 @@ public struct CaptureScreen: View {
         let profile = viewModel.activeProfile
         let edge = viewModel.sidebarEdge
 
+        let hapticIntensity = settingsRepo.hapticIntensity
+
         if edge == .leading {
             HStack(spacing: 0) {
                 ExpressKeysSidebar(
                     profile: profile,
                     edge: edge,
+                    hapticIntensity: hapticIntensity,
                     onKeyEvent: { event in
                         viewModel.handleExpressKeyEvent(event)
                     }
@@ -173,6 +191,7 @@ public struct CaptureScreen: View {
                 ExpressKeysSidebar(
                     profile: profile,
                     edge: edge,
+                    hapticIntensity: hapticIntensity,
                     onKeyEvent: { event in
                         viewModel.handleExpressKeyEvent(event)
                     }
@@ -194,36 +213,60 @@ public struct CaptureScreen: View {
     // MARK: - HUD
 
     /// Renders the HUD button row and reports its frame as a deadzone.
+    ///
+    /// In fullscreen mode, only the fullscreen-toggle button remains visible
+    /// (small, semi-transparent) so the user can exit fullscreen. All other
+    /// HUD elements (pill, settings, disconnect) fade out.
     @ViewBuilder
     private func hudOverlay(fullGeo: GeometryProxy) -> some View {
         VStack {
             HStack {
-                // Top-left: connection-state pill (non-interactive, no deadzone needed)
+                // Top-left: connection-state pill (non-interactive, no deadzone needed).
+                // Hidden in fullscreen.
                 ConnectionStatePill(state: viewModel.connectionState)
                     .animation(.easeInOut(duration: 0.25), value: viewModel.connectionState)
                     .padding(.leading, 16)
                     .padding(.top, 16)
                     .allowsHitTesting(false)
+                    .opacity(isFullscreen ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isFullscreen)
 
                 Spacer()
 
-                // Top-right: settings + disconnect buttons
+                // Top-right: settings + disconnect + fullscreen-toggle buttons.
                 HStack(spacing: 12) {
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.8))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
+                    // Settings and disconnect — hidden in fullscreen.
+                    Group {
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(.white.opacity(0.8))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
 
-                    Button(action: { onDisconnect() }) {
-                        Image(systemName: "xmark.circle")
+                        Button(action: { onDisconnect() }) {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(.white.opacity(0.8))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                    }
+                    .opacity(isFullscreen ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isFullscreen)
+
+                    // Fullscreen toggle — always visible (semi-transparent in fullscreen).
+                    Button(action: { isFullscreen.toggle() }) {
+                        Image(systemName: isFullscreen
+                              ? "arrow.down.right.and.arrow.up.left"
+                              : "arrow.up.left.and.arrow.down.right")
                             .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .foregroundStyle(.white.opacity(isFullscreen ? 0.45 : 0.8))
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
+                    .animation(.easeInOut(duration: 0.3), value: isFullscreen)
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 16)
@@ -256,14 +299,38 @@ public struct CaptureScreen: View {
 // MARK: - ConnectionStatePill
 
 /// Compact indicator showing the current connection state.
+///
+/// When connected, a pulsing halo animates behind the dot at a 1.2 s loop,
+/// scaling from 1× to 2× and fading out — matching Android StatusScreen pulse.
 private struct ConnectionStatePill: View {
     let state: ConnectionState
 
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.0
+
+    private var isConnected: Bool {
+        if case .connected = state { return true }
+        return false
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(pillColor)
-                .frame(width: 8, height: 8)
+            ZStack {
+                // Pulsing halo — only visible when connected.
+                if isConnected {
+                    Circle()
+                        .fill(Color.inkAccent)
+                        .frame(width: 8, height: 8)
+                        .scaleEffect(pulseScale)
+                        .opacity(pulseOpacity)
+                }
+
+                // Solid dot.
+                Circle()
+                    .fill(pillColor)
+                    .frame(width: 8, height: 8)
+            }
+
             Text(pillLabel)
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.9))
@@ -271,13 +338,43 @@ private struct ConnectionStatePill: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(.ultraThinMaterial, in: Capsule())
+        .onAppear {
+            if isConnected { startPulse() }
+        }
+        .onChange(of: isConnected) { _, connected in
+            if connected {
+                startPulse()
+            } else {
+                stopPulse()
+            }
+        }
     }
+
+    // MARK: - Pulse helpers
+
+    private func startPulse() {
+        pulseScale = 1.0
+        pulseOpacity = 0.8
+        withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) {
+            pulseScale = 2.0
+            pulseOpacity = 0.0
+        }
+    }
+
+    private func stopPulse() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            pulseScale = 1.0
+            pulseOpacity = 0.0
+        }
+    }
+
+    // MARK: - State helpers
 
     private var pillColor: Color {
         switch state {
         case .idle:          return .gray
         case .connecting:    return .yellow
-        case .connected:     return .green
+        case .connected:     return .inkAccent
         case .failed:        return .red
         }
     }

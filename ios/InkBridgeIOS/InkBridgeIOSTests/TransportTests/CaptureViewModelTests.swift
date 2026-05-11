@@ -9,10 +9,11 @@ import CoreGraphics
 final class FakeSettingsRepository: SettingsRepository {
     var hostOverride: String = ""
     var port: UInt16 = 4545
-    var haptics: Bool = true
+    var hapticIntensity: Int = 50
     var naturalScroll: Bool = true
     var sidebarEdge: SidebarEdge = .trailing
     var activeProfileId: String = ""
+    var autoReconnect: Bool = true
 }
 
 // MARK: - I.3 — CaptureViewModel tests

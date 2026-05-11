@@ -58,7 +58,9 @@ public final class CaptureViewModel: TouchEventSink {
     public private(set) var activeProfile: ExpressKeyProfile
 
     /// Which edge the Express Key sidebar appears on.
-    public var sidebarEdge: SidebarEdge = .trailing
+    /// Reads directly from settingsRepo so it stays in sync when the user
+    /// changes the preference in ExpressKeysSettingsScreen.
+    public var sidebarEdge: SidebarEdge { settingsRepo.sidebarEdge }
 
     /// Brief visual indicator when a stylus button event fires. Resets to `.idle` after 80 ms.
     public private(set) var clickFlash: ClickFlashState = .idle
